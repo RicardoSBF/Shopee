@@ -3,6 +3,7 @@ import NavigationTabs from "./NavigationTabs";
 import HomeTab from "./HomeTab";
 import ScheduleTab from "./ScheduleTab";
 import ConfigurationTab from "./ConfigurationTab";
+import AvailableDriverRoutes from "./AvailableDriverRoutes";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface MainDashboardProps {
@@ -161,6 +162,18 @@ const MainDashboard = ({
                 selectedShift={currentShift}
                 onShiftSelect={handleShiftSelect}
               />
+            </motion.div>
+          )}
+
+          {activeTab === "routes" && (
+            <motion.div
+              key="routes"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              transition={{ duration: 0.3 }}
+            >
+              <AvailableDriverRoutes />
             </motion.div>
           )}
 

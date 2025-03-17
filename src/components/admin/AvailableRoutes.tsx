@@ -209,33 +209,11 @@ const AvailableRoutes = () => {
 
       if (error) {
         console.error("Erro ao buscar rotas do Supabase:", error);
-        // Tentar carregar do localStorage como fallback
-        const savedRoutes = localStorage.getItem("importedRoutes");
-        if (savedRoutes) {
-          try {
-            const parsedRoutes = JSON.parse(savedRoutes);
-            console.log(
-              "Rotas carregadas do localStorage:",
-              parsedRoutes.length,
-            );
-            setRoutes(parsedRoutes);
-            processRoutes(parsedRoutes);
-          } catch (parseError) {
-            console.error("Erro ao analisar JSON do localStorage:", parseError);
-            // Se houver erro ao analisar o JSON, limpar o localStorage
-            localStorage.removeItem("importedRoutes");
-            setRoutes([]);
-            setFilteredRoutes([]);
-            setAvailableDates([]);
-            setSelectedDate("");
-          }
-        } else {
-          // Se não houver dados no localStorage, definir arrays vazios
-          setRoutes([]);
-          setFilteredRoutes([]);
-          setAvailableDates([]);
-          setSelectedDate("");
-        }
+        // Definir arrays vazios em caso de erro
+        setRoutes([]);
+        setFilteredRoutes([]);
+        setAvailableDates([]);
+        setSelectedDate("");
       } else if (data && data.length > 0) {
         console.log("Rotas carregadas do Supabase:", data.length);
         // Transformar dados do Supabase para o formato RouteData com otimização
@@ -255,40 +233,10 @@ const AvailableRoutes = () => {
           rawData: route.raw_data || undefined,
         }));
 
-        // Também atualizar o localStorage para manter sincronizado
-        try {
-          localStorage.setItem(
-            "importedRoutes",
-            JSON.stringify(formattedRoutes),
-          );
-        } catch (storageError) {
-          console.error("Erro ao salvar no localStorage:", storageError);
-          // Ignorar erros de armazenamento (pode ocorrer se o localStorage estiver cheio)
-        }
-
         setRoutes(formattedRoutes);
         processRoutes(formattedRoutes);
       } else {
         console.log("Nenhuma rota encontrada no Supabase");
-
-        // Verificar se há rotas no localStorage
-        const savedRoutes = localStorage.getItem("importedRoutes");
-        if (savedRoutes) {
-          try {
-            const parsedRoutes = JSON.parse(savedRoutes);
-            if (Array.isArray(parsedRoutes) && parsedRoutes.length > 0) {
-              console.log(
-                "Rotas carregadas do localStorage (quando Supabase vazio):",
-                parsedRoutes.length,
-              );
-              setRoutes(parsedRoutes);
-              processRoutes(parsedRoutes);
-              return;
-            }
-          } catch (parseError) {
-            console.error("Erro ao analisar JSON do localStorage:", parseError);
-          }
-        }
 
         // Se não houver dados no Supabase nem no localStorage, definir arrays vazios
         setRoutes([]);
@@ -298,36 +246,11 @@ const AvailableRoutes = () => {
       }
     } catch (error) {
       console.error("Erro geral ao buscar rotas:", error);
-      // Tentar carregar do localStorage como fallback
-      const savedRoutes = localStorage.getItem("importedRoutes");
-      if (savedRoutes) {
-        try {
-          const parsedRoutes = JSON.parse(savedRoutes);
-          console.log(
-            "Rotas carregadas do localStorage (fallback):",
-            parsedRoutes.length,
-          );
-          setRoutes(parsedRoutes);
-          processRoutes(parsedRoutes);
-        } catch (parseError) {
-          console.error(
-            "Erro ao analisar JSON do localStorage (fallback):",
-            parseError,
-          );
-          // Se houver erro ao analisar o JSON, limpar o localStorage
-          localStorage.removeItem("importedRoutes");
-          setRoutes([]);
-          setFilteredRoutes([]);
-          setAvailableDates([]);
-          setSelectedDate("");
-        }
-      } else {
-        // Se não houver dados no localStorage, definir arrays vazios
-        setRoutes([]);
-        setFilteredRoutes([]);
-        setAvailableDates([]);
-        setSelectedDate("");
-      }
+
+      setRoutes([]);
+      setFilteredRoutes([]);
+      setAvailableDates([]);
+      setSelectedDate("");
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);

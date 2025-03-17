@@ -44,7 +44,7 @@ const NavigationTabs = React.memo(
             onValueChange={handleTabChange}
             className="w-full max-w-md"
           >
-            <TabsList className="grid w-full grid-cols-3 bg-orange-500/20 dark:bg-orange-800/30">
+            <TabsList className="grid w-full grid-cols-4 bg-orange-500/20 dark:bg-orange-800/30">
               <TabsTrigger
                 value="home"
                 className="flex items-center justify-center gap-2 py-3 transition-all duration-200 hover:bg-orange-600/20 data-[state=active]:bg-white/20 data-[state=active]:text-white"
@@ -58,6 +58,13 @@ const NavigationTabs = React.memo(
               >
                 <Calendar className="h-5 w-5" />
                 <span className="hidden sm:inline font-medium">Agenda</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="routes"
+                className="flex items-center justify-center gap-2 py-3 transition-all duration-200 hover:bg-orange-600/20 data-[state=active]:bg-white/20 data-[state=active]:text-white"
+              >
+                <MapPin className="h-5 w-5" />
+                <span className="hidden sm:inline font-medium">Rotas</span>
               </TabsTrigger>
               <TabsTrigger
                 value="configuration"

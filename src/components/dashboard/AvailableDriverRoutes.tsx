@@ -60,20 +60,31 @@ const AvailableDriverRoutes = () => {
     try {
       // Obter a região principal do usuário
       const primaryRegion = localStorage.getItem("primaryRegion");
-      if (!primaryRegion) {
-        console.log("Região principal não configurada");
+      // Obter regiões de backup do usuário
+      const backupRegionsStr = localStorage.getItem("backupRegions");
+      const backupRegions = backupRegionsStr
+        ? JSON.parse(backupRegionsStr)
+        : [];
+
+      if (!primaryRegion && (!backupRegions || backupRegions.length === 0)) {
+        console.log("Regiões não configuradas");
         setRoutes([]);
         setFilteredRoutes([]);
         setIsLoading(false);
         return;
       }
 
-      // Buscar rotas do Supabase que correspondam à região principal do usuário
+      // Criar array com todas as regiões do usuário
+      const userRegions = [primaryRegion, ...backupRegions].filter(Boolean);
+      console.log("Regiões do usuário:", userRegions);
+
+      // Buscar rotas do Supabase que correspondam às regiões do usuário
       const { data, error } = await supabase
         .from("routes")
         .select("*")
         .eq("is_assigned", false) // Apenas rotas não atribuídas
-        .eq("city", primaryRegion) // Apenas rotas da região principal
+        .eq("is_pending", false) // Apenas rotas não pendentes
+        .in("city", userRegions) // Rotas das regiões do usuário
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -89,10 +100,14 @@ const AvailableDriverRoutes = () => {
           city: route.city,
           neighborhoods: route.neighborhoods || [],
           totalDistance: route.total_distance || 0,
-          sequence: route.sequence || 0,
+          sequence:
+            route.raw_data && route.raw_data.length > 1
+              ? route.raw_data.length - 1
+              : 0,
           shift: route.shift,
           date: route.date,
           createdAt: route.created_at,
+          rawData: route.raw_data || [],
           isAssigned: false,
         }));
 
@@ -370,7 +385,10 @@ const AvailableDriverRoutes = () => {
                       <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-full shadow-sm">
                         <Package className="h-4 w-4 text-orange-500" />
                         <span className="text-sm font-medium">
-                          {route.sequence} pacotes
+                          {route.rawData && route.rawData.length > 1
+                            ? route.rawData.length - 1
+                            : route.sequence}{" "}
+                          pacotes
                         </span>
                       </div>
                     </div>
@@ -441,7 +459,11 @@ const AvailableDriverRoutes = () => {
                 <div className="flex items-center gap-2">
                   <Package className="h-4 w-4 text-orange-600" />
                   <span className="text-orange-800">
-                    {confirmRouteData.sequence} pacotes
+                    {confirmRouteData.rawData &&
+                    confirmRouteData.rawData.length > 1
+                      ? confirmRouteData.rawData.length - 1
+                      : confirmRouteData.sequence}{" "}
+                    pacotes
                   </span>
                 </div>
               </div>

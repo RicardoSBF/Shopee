@@ -38,17 +38,26 @@ interface IForm {
   file: FileList;
 }
 
-// Função para converter Excel para JSON conforme solicitado
+// Função para converter Excel para JSON com opções otimizadas
 const convertExcelToJson = (buffer: ArrayBuffer) => {
-  const workbook = XLSX.read(buffer, { type: "array" });
-  const sheetName = workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[sheetName];
+  try {
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
 
-  return XLSX.utils.sheet_to_json(worksheet, {
-    header: 1,
-    defval: null,
-    raw: false,
-  }) as string[][];
+    // Converter para array com cabeçalhos numéricos
+    const jsonData = XLSX.utils.sheet_to_json(worksheet, {
+      header: 1,
+      defval: "", // Valor padrão para células vazias
+      raw: false, // Não converter valores
+    }) as any[][];
+
+    console.log("Dados convertidos do Excel:", jsonData.slice(0, 3)); // Log primeiras 3 linhas para debug
+    return jsonData;
+  } catch (error) {
+    console.error("Erro ao converter Excel para JSON:", error);
+    throw new Error("Falha ao processar arquivo Excel. Formato inválido.");
+  }
 };
 
 const RouteImport = () => {
@@ -138,7 +147,13 @@ const RouteImport = () => {
   const [selectedDate, setSelectedDate] = useState(
     format(new Date(), "yyyy-MM-dd"),
   );
-  const [excelData, setExcelData] = useState<string[][]>([]);
+  const [excelData, setExcelData] = useState<any[][]>([]);
+  const [previewData, setPreviewData] = useState<{
+    neighborhoods: string[];
+    city: string;
+    packages: number;
+    distance: number;
+  } | null>(null);
 
   // Usando react-hook-form para gerenciar o arquivo
   const { register, watch, reset } = useForm<IForm>();
@@ -163,12 +178,74 @@ const RouteImport = () => {
         try {
           const data = convertExcelToJson(buffer);
           setExcelData(data);
+
+          // Extrair dados para preview
+          if (data.length > 1) {
+            // Pular cabeçalho
+            const neighborhoods = new Set<string>();
+            let city = "";
+            let totalPackages = 0;
+            let maxDistance = 0;
+
+            // Processar todas as linhas para extrair informações
+            for (let i = 1; i < data.length; i++) {
+              const row = data[i];
+              if (!row || row.length < 9) continue;
+
+              // Índices específicos conforme informado pelo usuário
+              // Índice 6: Endereço completo
+              // Índice 7: Cidade
+              // Índice 8: Bairro
+              const address = row[6] ? String(row[6]).trim() : "";
+              const cityValue = row[7] ? String(row[7]).trim() : "";
+              const neighborhood = row[8] ? String(row[8]).trim() : "";
+
+              // Quantidade de pacotes (índice 0)
+              const packages = row[2] ? parseInt(String(row[2]).trim()) : 0;
+
+              // Distância (índice 3)
+              const distanceStr = row[3] ? String(row[3]).trim() : "0";
+              const distance = parseFloat(
+                distanceStr.replace(/[^\d.,]/g, "").replace(",", "."),
+              );
+
+              // Coletar bairros únicos
+              if (neighborhood) {
+                neighborhoods.add(neighborhood);
+              }
+
+              // Pegar a primeira cidade válida encontrada
+              if (!city && cityValue) {
+                city = cityValue;
+              }
+
+              // Somar pacotes
+              if (!isNaN(packages)) {
+                totalPackages += packages;
+              }
+
+              // Pegar a maior distância
+              if (!isNaN(distance) && distance > maxDistance) {
+                maxDistance = distance;
+              }
+            }
+
+            // Definir dados de preview
+            setPreviewData({
+              neighborhoods: Array.from(neighborhoods),
+              city: city,
+              packages: totalPackages,
+              distance: maxDistance,
+            });
+          }
+
           setError(null);
         } catch (err) {
           console.error("Erro ao processar arquivo Excel:", err);
           setError(
             `Erro ao processar o arquivo "${file[0].name}". Verifique se o formato é válido.`,
           );
+          setPreviewData(null);
         }
       });
     }
@@ -223,100 +300,91 @@ const RouteImport = () => {
           try {
             const buffer = await currentFile.arrayBuffer();
             const fileData = convertExcelToJson(buffer);
-            const dataRows = fileData.slice(1); // Pular a primeira linha se for um cabeçalho
+
+            // Pular a primeira linha (cabeçalho)
+            const dataRows = fileData.slice(1);
 
             console.log(
-              `Iniciando processamento da rota ${fileIndex + 1}/${file.length} para Supabase`,
+              `Iniciando processamento da rota ${fileIndex + 1}/${file.length}`,
+              `Linhas encontradas: ${dataRows.length}`,
             );
 
-            // Extrair informações específicas dos índices solicitados
+            // Estrutura para armazenar dados da rota
             const routeData = {
               file_name: currentFile.name,
               city: "",
               neighborhoods: new Set<string>(),
               total_distance: 0,
-              sequence: 0,
+              sequence: 0, // Total de pacotes
               route_name: "",
               shift: selectedShift,
               date: selectedDate,
               created_at: new Date().toISOString(),
+              raw_data: fileData, // Armazenar dados completos
             };
 
-            console.log(
-              `Processando dados do Excel ${currentFile.name}:`,
-              dataRows,
-            );
+            // Processar cada linha para extrair dados
+            for (let i = 0; i < dataRows.length; i++) {
+              const row = dataRows[i];
+              if (!row || row.length < 9) continue;
 
-            // Obter a distância do primeiro registro apenas (índice 3)
-            if (dataRows.length > 0 && dataRows[0] && dataRows[0].length > 3) {
-              const distanceStr = dataRows[0][3] || "0";
+              // Índices específicos conforme informado pelo usuário
+              // Índice 6: Endereço completo
+              // Índice 7: Cidade
+              // Índice 8: Bairro
+              const address = row[6] ? String(row[6]).trim() : "";
+              const cityValue = row[7] ? String(row[7]).trim() : "";
+              const neighborhood = row[8] ? String(row[8]).trim() : "";
+
+              // Quantidade de pacotes (índice 0)
+              const packages = row[0] ? parseInt(String(row[0]).trim()) : 0;
+
+              // Distância (índice 3)
+              const distanceStr = row[3] ? String(row[3]).trim() : "0";
               const distance = parseFloat(
-                distanceStr
-                  .toString()
-                  .replace(/[^\d.,]/g, "")
-                  .replace(",", "."),
+                distanceStr.replace(/[^\d.,]/g, "").replace(",", "."),
               );
-              if (!isNaN(distance)) {
+
+              // Incrementar contagem de pacotes
+              if (!isNaN(packages) && packages > 0) {
+                routeData.sequence += packages;
+              }
+
+              // Atualizar distância total (pegar a maior)
+              if (!isNaN(distance) && distance > routeData.total_distance) {
                 routeData.total_distance = distance;
+              }
+
+              // Definir cidade (primeira encontrada)
+              if (!routeData.city && cityValue) {
+                routeData.city = cityValue;
+              }
+
+              // Adicionar bairro ao conjunto
+              if (neighborhood) {
+                routeData.neighborhoods.add(neighborhood);
+              }
+
+              // Nome da rota (índice 15, se disponível)
+              if (row.length > 15 && row[15] && !routeData.route_name) {
+                routeData.route_name = String(row[15]).trim();
               }
             }
 
-            // Processar cada linha para extrair os dados necessários
-            dataRows.forEach((row) => {
-              if (row && row.length > 15) {
-                // Quantidade de pacotes (índice 0)
-                const packages = parseInt(row[0] || "0");
-                if (!isNaN(packages) && packages > routeData.sequence) {
-                  routeData.sequence = packages;
-                }
+            // Se não encontrou nome da rota, usar nome do arquivo
+            if (!routeData.route_name) {
+              routeData.route_name = currentFile.name.replace(/\.[^/.]+$/, ""); // Remover extensão
+            }
 
-                // Endereço completo (índice 6)
-                if (row[6]) {
-                  // Extrair cidade e bairro do endereço completo
-                  const addressParts = String(row[6]).split(",");
-                  if (addressParts.length >= 2) {
-                    // O último elemento geralmente contém a cidade
-                    const cityPart =
-                      addressParts[addressParts.length - 1].trim();
-                    if (cityPart && !routeData.city) {
-                      routeData.city = cityPart;
-                    }
+            // Se não encontrou cidade, usar "Não especificada"
+            if (!routeData.city) {
+              routeData.city = "Cidade não especificada";
+            }
 
-                    // O penúltimo elemento geralmente contém o bairro
-                    if (addressParts.length >= 3) {
-                      const neighborhood =
-                        addressParts[addressParts.length - 2].trim();
-                      if (neighborhood) {
-                        routeData.neighborhoods.add(neighborhood);
-                      }
-                    }
-                  }
-                }
-
-                // Cidade (índice 7) - backup se não conseguir extrair do endereço
-                if (row[7] && !routeData.city) {
-                  routeData.city = row[7];
-                }
-
-                // Bairros (índice 8) - backup se não conseguir extrair do endereço
-                if (row[8]) {
-                  routeData.neighborhoods.add(row[8]);
-                }
-
-                // Nome da rota (índice 15)
-                if (row[15] && !routeData.route_name) {
-                  routeData.route_name = row[15];
-                }
-              }
-            });
-
-            console.log(`Dados extraídos do Excel ${currentFile.name}:`, {
-              sequence: routeData.sequence,
-              total_distance: routeData.total_distance,
-              city: routeData.city,
-              neighborhoods: Array.from(routeData.neighborhoods),
-              route_name: routeData.route_name,
-            });
+            // Garantir que sequence tenha um valor mínimo
+            if (routeData.sequence <= 0) {
+              routeData.sequence = dataRows.length;
+            }
 
             // Gerar um ID único para a rota
             const routeId = uuidv4();
@@ -325,21 +393,29 @@ const RouteImport = () => {
             const finalRouteData = {
               id: routeId,
               file_name: routeData.route_name || currentFile.name,
-              city: routeData.city || "Cidade não especificada",
+              city: routeData.city,
               neighborhoods: Array.from(routeData.neighborhoods),
               total_distance: routeData.total_distance || 0,
               sequence: routeData.sequence || dataRows.length,
               shift: selectedShift,
               date: selectedDate,
               created_at: new Date().toISOString(),
-              // Armazenar apenas os primeiros 20 registros para evitar problemas de tamanho
-              raw_data: fileData.slice(0, 20),
+              raw_data: fileData, // Armazenar dados completos
             };
 
             console.log(`ID da rota gerado para ${currentFile.name}:`, routeId);
             console.log(
               `Dados finais para importação de ${currentFile.name}:`,
-              finalRouteData,
+              {
+                ...finalRouteData,
+                neighborhoods:
+                  finalRouteData.neighborhoods.length > 0
+                    ? finalRouteData.neighborhoods.slice(0, 5) +
+                      (finalRouteData.neighborhoods.length > 5
+                        ? ` e mais ${finalRouteData.neighborhoods.length - 5}`
+                        : "")
+                    : "Nenhum bairro encontrado",
+              },
             );
 
             // Verificar se uma rota com o mesmo nome, turno e data já existe
@@ -398,16 +474,20 @@ const RouteImport = () => {
                 shift: finalRouteData.shift,
                 date: finalRouteData.date,
                 created_at: finalRouteData.created_at,
-                raw_data: finalRouteData.raw_data, // Incluir raw_data com tamanho limitado
+                raw_data: finalRouteData.raw_data, // Incluir raw_data completo
               };
 
-              // Salvar no Supabase com abordagem simplificada
-              console.log(
-                `Salvando no Supabase (dados simplificados) para ${currentFile.name}:`,
-                supabaseRouteData,
-              );
-
-              // Removido teste de conexão desnecessário
+              console.log(`Salvando no Supabase para ${currentFile.name}:`, {
+                ...supabaseRouteData,
+                neighborhoods:
+                  supabaseRouteData.neighborhoods.length > 0
+                    ? supabaseRouteData.neighborhoods.slice(0, 5) +
+                      (supabaseRouteData.neighborhoods.length > 5
+                        ? ` e mais ${supabaseRouteData.neighborhoods.length - 5}`
+                        : "")
+                    : "Nenhum bairro encontrado",
+                raw_data: "[Dados completos omitidos para log]",
+              });
 
               const { data, error } = await supabase
                 .from("routes")
@@ -415,7 +495,7 @@ const RouteImport = () => {
                 .select();
 
               console.log(`Resposta do Supabase para ${currentFile.name}:`, {
-                data,
+                data: data ? "Dados recebidos" : "Sem dados",
                 error,
               });
 
@@ -687,7 +767,7 @@ const RouteImport = () => {
             </div>
           )}
 
-          {excelData.length > 0 && (
+          {previewData && (
             <div className="p-4 bg-gradient-to-r from-green-50 to-green-50/50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800/30 shadow-sm">
               <div className="flex items-center gap-3 mb-2">
                 <div className="bg-green-100 p-2 rounded-full">
@@ -698,12 +778,54 @@ const RouteImport = () => {
                 </span>
               </div>
               <div className="text-xs text-gray-600 dark:text-gray-400 bg-white p-2 rounded-md border border-green-100">
-                <p className="flex justify-between">
-                  <span>Linhas encontradas:</span>
+                <p className="flex justify-between mb-1">
+                  <span>Cidade:</span>
                   <span className="font-medium text-green-700">
-                    {excelData.length}
+                    {previewData.city || "Não identificada"}
                   </span>
                 </p>
+                <p className="flex justify-between mb-1">
+                  <span>Pacotes:</span>
+                  <span className="font-medium text-green-700">
+                    {previewData.packages}
+                  </span>
+                </p>
+                <p className="flex justify-between mb-1">
+                  <span>Distância:</span>
+                  <span className="font-medium text-green-700">
+                    {previewData.distance.toFixed(2)} km
+                  </span>
+                </p>
+                <p className="flex justify-between">
+                  <span>Bairros encontrados:</span>
+                  <span className="font-medium text-green-700">
+                    {previewData.neighborhoods.length}
+                  </span>
+                </p>
+                {previewData.neighborhoods.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-gray-100">
+                    <p className="text-xs text-gray-500 mb-1">
+                      Primeiros bairros:
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {previewData.neighborhoods
+                        .slice(0, 5)
+                        .map((neighborhood, index) => (
+                          <span
+                            key={index}
+                            className="bg-green-50 text-green-700 text-xs px-2 py-0.5 rounded-full"
+                          >
+                            {neighborhood}
+                          </span>
+                        ))}
+                      {previewData.neighborhoods.length > 5 && (
+                        <span className="bg-orange-50 text-orange-700 text-xs px-2 py-0.5 rounded-full">
+                          +{previewData.neighborhoods.length - 5} mais
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -741,6 +863,7 @@ const RouteImport = () => {
               setIsOpen(false);
               reset();
               setExcelData([]);
+              setPreviewData(null);
               setError(null);
             }}
             disabled={isLoading}

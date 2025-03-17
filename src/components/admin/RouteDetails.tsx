@@ -73,8 +73,8 @@ const RouteDetails: React.FC<RouteDetailsProps> = ({
       setIsLoading(true);
       try {
         const { data, error } = await supabase
-          .from("profiles")
-          .select("id, full_name, vehicle_type, phone")
+          .from("users")
+          .select("id, full_name, vehicle_type, phone_number")
           .eq("is_admin", false);
 
         if (error) throw error;
@@ -84,7 +84,7 @@ const RouteDetails: React.FC<RouteDetailsProps> = ({
           id: driver.id,
           name: driver.full_name || "Sem nome",
           vehicle_type: driver.vehicle_type || "Não especificado",
-          phone: driver.phone || "Sem telefone",
+          phone: driver.phone_number || "Sem telefone",
         }));
 
         setDrivers(mappedDrivers);
@@ -120,41 +120,62 @@ const RouteDetails: React.FC<RouteDetailsProps> = ({
   // Processar dados das paradas
   useEffect(() => {
     if (routeData && routeData.rawData) {
-      // Agrupar paradas por número de parada (índice 1)
-      const stopsMap = new Map();
+      try {
+        // Agrupar paradas por número de parada (índice 1)
+        const stopsMap = new Map();
 
-      routeData.rawData.forEach((row: any, index: number) => {
-        if (index === 0) return; // Pular linha de cabeçalho
+        // Pular a primeira linha (cabeçalho)
+        const dataRows = routeData.rawData.slice(1);
 
-        const stopNumber = row[1];
-        const orderNumber = row[0];
-        const address = row[6];
-        const neighborhood = row[8];
-        const zipCode = row[5];
-        const trackingNumber = row[4];
+        dataRows.forEach((row, index) => {
+          if (!row || row.length < 9) return; // Pular linhas inválidas
 
-        if (!stopsMap.has(stopNumber)) {
-          stopsMap.set(stopNumber, []);
-        }
+          const stopNumber = row[1] ? String(row[1]).trim() : `Stop-${index}`;
+          const orderNumber = row[0] ? String(row[0]).trim() : `${index + 1}`;
+          const address = row[6]
+            ? String(row[6]).trim()
+            : "Endereço não especificado";
+          const city = row[7] ? String(row[7]).trim() : "";
+          const neighborhood = row[8] ? String(row[8]).trim() : "";
+          const zipCode = row[5] ? String(row[5]).trim() : "";
+          const trackingNumber = row[4] ? String(row[4]).trim() : "";
 
-        stopsMap.get(stopNumber).push({
-          orderNumber,
-          address,
-          neighborhood,
-          zipCode,
-          trackingNumber,
+          if (!stopsMap.has(stopNumber)) {
+            stopsMap.set(stopNumber, []);
+          }
+
+          stopsMap.get(stopNumber).push({
+            orderNumber,
+            address,
+            city,
+            neighborhood,
+            zipCode,
+            trackingNumber,
+          });
         });
-      });
 
-      // Converter mapa para array
-      const stopsArray = Array.from(stopsMap.entries()).map(
-        ([stopNumber, addresses]) => ({
-          stopNumber,
-          addresses,
-        }),
-      );
+        // Converter mapa para array
+        const stopsArray = Array.from(stopsMap.entries()).map(
+          ([stopNumber, addresses]) => ({
+            stopNumber,
+            addresses,
+          }),
+        );
 
-      setStops(stopsArray);
+        setStops(stopsArray);
+        console.log(
+          "Paradas processadas:",
+          stopsArray.length,
+          "com",
+          stopsArray.reduce((total, stop) => total + stop.addresses.length, 0),
+          "endereços",
+        );
+      } catch (error) {
+        console.error("Erro ao processar dados das paradas:", error);
+        setStops([]);
+      }
+    } else {
+      setStops([]);
     }
   }, [routeData]);
 
@@ -422,14 +443,16 @@ const RouteDetails: React.FC<RouteDetailsProps> = ({
                               <div className="flex items-center justify-between mt-1">
                                 <div className="flex items-center gap-1 text-sm text-gray-500">
                                   <MapPinned className="h-3.5 w-3.5" />
-                                  {address.neighborhood}
+                                  {address.neighborhood ||
+                                    address.city ||
+                                    "Não especificado"}
                                 </div>
                                 <div className="text-sm text-gray-500">
-                                  {address.zipCode}
+                                  {address.zipCode || ""}
                                 </div>
                               </div>
                               <div className="text-xs text-gray-400 mt-1">
-                                Rastreamento: {address.trackingNumber}
+                                Rastreamento: {address.trackingNumber || "N/A"}
                               </div>
                             </div>
                           </div>
