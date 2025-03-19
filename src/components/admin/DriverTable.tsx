@@ -483,12 +483,6 @@ const DriverTable = ({
         <div className="text-sm font-medium text-orange-700">
           Mostrando {sortedDrivers.length} de {drivers.length} motoristas
         </div>
-        <Button
-          variant="outline"
-          className="text-xs border-orange-200 text-orange-600 hover:bg-orange-50"
-        >
-          <Download className="h-3 w-3 mr-1" /> Exportar Lista
-        </Button>
       </div>
     </div>
   );

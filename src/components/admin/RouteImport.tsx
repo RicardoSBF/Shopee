@@ -201,7 +201,7 @@ const RouteImport = () => {
               const neighborhood = row[8] ? String(row[8]).trim() : "";
 
               // Quantidade de pacotes (índice 0)
-              const packages = row[2] ? parseInt(String(row[2]).trim()) : 0;
+              const packages = 1; // Contar apenas a linha, não o valor
 
               // Distância (índice 3)
               const distanceStr = row[3] ? String(row[3]).trim() : "0";
@@ -220,13 +220,11 @@ const RouteImport = () => {
               }
 
               // Somar pacotes
-              if (!isNaN(packages)) {
-                totalPackages += packages;
-              }
+              totalPackages += packages;
 
               // Pegar a maior distância
               if (!isNaN(distance) && distance > maxDistance) {
-                maxDistance = distance;
+                maxDistance = Math.floor(distance);
               }
             }
 
@@ -336,23 +334,18 @@ const RouteImport = () => {
               const cityValue = row[7] ? String(row[7]).trim() : "";
               const neighborhood = row[8] ? String(row[8]).trim() : "";
 
-              // Quantidade de pacotes (índice 0)
-              const packages = row[0] ? parseInt(String(row[0]).trim()) : 0;
+              // Incrementar contagem de pacotes (apenas contar a linha, não somar valores)
+              routeData.sequence += 1;
 
-              // Distância (índice 3)
-              const distanceStr = row[3] ? String(row[3]).trim() : "0";
+              // Distância (índice 0)
+              const distanceStr = row[0] ? String(row[0]).trim() : "0";
               const distance = parseFloat(
                 distanceStr.replace(/[^\d.,]/g, "").replace(",", "."),
               );
 
-              // Incrementar contagem de pacotes
-              if (!isNaN(packages) && packages > 0) {
-                routeData.sequence += packages;
-              }
-
               // Atualizar distância total (pegar a maior)
               if (!isNaN(distance) && distance > routeData.total_distance) {
-                routeData.total_distance = distance;
+                routeData.total_distance = Math.floor(distance);
               }
 
               // Definir cidade (primeira encontrada)
@@ -793,7 +786,7 @@ const RouteImport = () => {
                 <p className="flex justify-between mb-1">
                   <span>Distância:</span>
                   <span className="font-medium text-green-700">
-                    {previewData.distance.toFixed(2)} km
+                    {Math.floor(previewData.distance)} km
                   </span>
                 </p>
                 <p className="flex justify-between">

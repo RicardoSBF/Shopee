@@ -98,6 +98,9 @@ const HomeTab = ({
     totalDistance: 1243,
   });
 
+  // Estado para armazenar a rota atribuída ao motorista
+  const [assignedRoute, setAssignedRoute] = useState<any>(null);
+
   // Carregar disponibilidade do localStorage ao montar o componente - otimizado
   React.useEffect(() => {
     // Verificar se há disponibilidade para o dia seguinte
@@ -150,7 +153,103 @@ const HomeTab = ({
         }
       };
 
+      // Buscar rota atribuída ao motorista
+      const fetchAssignedRoute = async () => {
+        try {
+          // Buscar atribuição de rota aprovada
+          const { data: assignmentData, error: assignmentError } =
+            await supabase
+              .from("route_assignments")
+              .select("*")
+              .eq("driver_id", userId)
+              .eq("status", "approved")
+              .order("created_at", { ascending: false })
+              .limit(1);
+
+          if (assignmentError) {
+            console.error(
+              "Erro ao buscar atribuição de rota:",
+              assignmentError,
+            );
+            return;
+          }
+
+          if (assignmentData && assignmentData.length > 0) {
+            // Buscar detalhes da rota
+            const { data: routeData, error: routeError } = await supabase
+              .from("routes")
+              .select("*")
+              .eq("id", assignmentData[0].route_id)
+              .single();
+
+            if (routeError) {
+              console.error("Erro ao buscar detalhes da rota:", routeError);
+              return;
+            }
+
+            if (routeData) {
+              // Verificar se a rota ainda está válida (não expirou)
+              const now = new Date();
+              const routeDate = new Date(routeData.date);
+              let loadingTime;
+
+              if (routeData.shift === "AM") {
+                loadingTime = new Date(routeDate);
+                loadingTime.setHours(12, 0, 0, 0);
+              } else if (routeData.shift === "PM") {
+                loadingTime = new Date(routeDate);
+                loadingTime.setHours(18, 0, 0, 0);
+              } else {
+                loadingTime = new Date(routeDate);
+                loadingTime.setHours(23, 59, 0, 0);
+              }
+
+              // Só mostrar a rota se ainda não passou do horário de carregamento
+              if (now < loadingTime) {
+                setAssignedRoute({
+                  id: routeData.id,
+                  fileName: routeData.file_name,
+                  city: routeData.city,
+                  neighborhoods: routeData.neighborhoods || [],
+                  totalDistance: routeData.total_distance || 0,
+                  shift: routeData.shift,
+                  date: routeData.date,
+                  assignmentId: assignmentData[0].id,
+                  status: assignmentData[0].status,
+                });
+              } else {
+                // Se a rota expirou, atualizar o status para completed
+                const { error: updateError } = await supabase
+                  .from("route_assignments")
+                  .update({ status: "completed" })
+                  .eq("id", assignmentData[0].id);
+
+                if (updateError) {
+                  console.error(
+                    "Erro ao atualizar status da rota:",
+                    updateError,
+                  );
+                } else {
+                  // Limpar a rota atribuída após o turno terminar
+                  setAssignedRoute(null);
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Erro ao buscar rota atribuída:", error);
+        }
+      };
+
       fetchNextDayAvailability();
+      fetchAssignedRoute();
+
+      // Configurar verificação periódica para atualizar o status da rota
+      const interval = setInterval(() => {
+        fetchAssignedRoute();
+      }, 60000); // Verificar a cada minuto para garantir que rotas expiradas sejam removidas rapidamente
+
+      return () => clearInterval(interval);
     }
 
     // Verificar se as verificações estão ativas
@@ -328,6 +427,59 @@ const HomeTab = ({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Rota atribuída ao motorista */}
+              {assignedRoute && (
+                <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-md border border-green-100 dark:border-green-800/30 mb-4">
+                  <div className="flex justify-between items-center mb-1">
+                    <h3 className="font-medium text-green-800 dark:text-green-300">
+                      Rota Atribuída - {assignedRoute.shift}
+                    </h3>
+                    <Badge
+                      variant="outline"
+                      className="bg-green-100 dark:bg-green-800/30 text-green-800 dark:text-green-300"
+                    >
+                      Aprovada
+                    </Badge>
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    <p className="text-sm flex items-center text-green-700 dark:text-green-400">
+                      <MapPin className="h-4 w-4 mr-1" />
+                      <span className="font-medium">{assignedRoute.city}</span>
+                    </p>
+                    <p className="text-sm text-green-700 dark:text-green-400 bg-green-100 dark:bg-green-900/50 px-2 py-1 rounded">
+                      <span className="font-medium">Bairros:</span>{" "}
+                      {assignedRoute.neighborhoods.slice(0, 3).join(", ")}
+                      {assignedRoute.neighborhoods.length > 3 && "..."}
+                    </p>
+                    <div className="flex justify-between items-center">
+                      <p className="text-sm text-green-700 dark:text-green-400">
+                        <Clock className="h-4 w-4 inline mr-1" />
+                        <span>
+                          {formatDateInPortuguese(assignedRoute.date)}
+                        </span>
+                      </p>
+                      <p className="text-sm text-green-700 dark:text-green-400">
+                        <Truck className="h-4 w-4 inline mr-1" />
+                        <span>{assignedRoute.totalDistance.toFixed(1)} km</span>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3 pt-2 border-t border-green-200 dark:border-green-800/30">
+                    <Button
+                      onClick={() => {
+                        if (typeof handleTabChange === "function") {
+                          handleTabChange("schedule");
+                        }
+                      }}
+                      className="w-full bg-green-600 hover:bg-green-700 text-white"
+                      size="sm"
+                    >
+                      Ver Detalhes da Rota
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               {currentAvailability.shift ? (
                 <div className="p-3 bg-orange-50 dark:bg-orange-900/20 rounded-md border border-orange-100 dark:border-orange-800/30">
                   <div className="flex justify-between items-center mb-1">

@@ -4,6 +4,7 @@ import HomeTab from "./HomeTab";
 import ScheduleTab from "./ScheduleTab";
 import ConfigurationTab from "./ConfigurationTab";
 import AvailableDriverRoutes from "./AvailableDriverRoutes";
+import NotificationSystem from "./NotificationSystem";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface MainDashboardProps {
@@ -74,11 +75,28 @@ const MainDashboard = ({
     "AM" | "PM" | "OUROBOROS" | null
   >(selectedShift);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [userId, setUserId] = useState<string>("");
 
   useEffect(() => {
+    // Carregar ID do usuário do localStorage
+    const loadUserId = () => {
+      const savedUser = localStorage.getItem("authenticatedUser");
+      if (savedUser) {
+        try {
+          const userData = JSON.parse(savedUser);
+          if (userData.userId) {
+            setUserId(userData.userId);
+          }
+        } catch (error) {
+          console.error("Erro ao carregar dados do usuário:", error);
+        }
+      }
+    };
+
     // Simulate loading
     const timer = setTimeout(() => {
       setIsLoaded(true);
+      loadUserId();
     }, 300);
     return () => clearTimeout(timer);
   }, []);
@@ -121,6 +139,9 @@ const MainDashboard = ({
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
+      {/* Sistema de Notificações */}
+      {userId && <NotificationSystem userId={userId} />}
+
       {/* Navigation Tabs */}
       <NavigationTabs
         activeTab={activeTab}
@@ -172,6 +193,7 @@ const MainDashboard = ({
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 20 }}
               transition={{ duration: 0.3 }}
+              className="container mx-auto px-4 py-6"
             >
               <AvailableDriverRoutes />
             </motion.div>

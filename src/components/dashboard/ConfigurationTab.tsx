@@ -39,7 +39,8 @@ import {
   Clock,
   AlertTriangle,
 } from "lucide-react";
-import DriverAppVerification from "./DriverAppVerification";
+import { useToast } from "@/components/ui/use-toast";
+
 import DeliveryRateVerification from "./DeliveryRateVerification";
 
 interface ConfigurationTabProps {
@@ -81,6 +82,7 @@ const ConfigurationTab = ({
   primaryRegion = "",
   backupRegions = [],
 }: ConfigurationTabProps) => {
+  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState(() => {
     // Try to get the saved tab from localStorage
     const savedTab = localStorage.getItem("configActiveTab");
@@ -160,32 +162,6 @@ const ConfigurationTab = ({
         issues.push("Regiões não configuradas");
       }
 
-      // Verificar status da verificação de identidade - agora é obrigatório
-      const driverAppVerified = localStorage.getItem("driverAppVerified");
-      const driverVerificationExpiration = localStorage.getItem(
-        "driverVerificationExpiration",
-      );
-
-      if (driverAppVerified !== "true") {
-        issues.push("Verificação de identidade pendente");
-      } else if (driverVerificationExpiration) {
-        const expirationDate = new Date(driverVerificationExpiration);
-        const now = new Date();
-        const daysUntilExpiration = Math.ceil(
-          (expirationDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
-        );
-
-        if (now > expirationDate) {
-          issues.push("Verificação de identidade expirada");
-          // Remover verificação expirada
-          localStorage.removeItem("driverAppVerified");
-        } else if (daysUntilExpiration <= 3) {
-          issues.push(
-            `Verificação de identidade expira em ${daysUntilExpiration} dia(s)`,
-          );
-        }
-      }
-
       // Verificar status da verificação de taxa de entrega
       const deliveryFee = localStorage.getItem("deliveryFee");
       const verificationExpiration = localStorage.getItem(
@@ -248,34 +224,128 @@ const ConfigurationTab = ({
     return () => clearInterval(intervalId);
   }, [lastUpdateTimestamp]);
 
-  // Função mantida apenas para compatibilidade, mas não é mais usada
   const onProfileSubmit = async (data: z.infer<typeof profileFormSchema>) => {
-    alert(
-      "Os dados do perfil só podem ser atualizados via verificação do Driver APP na aba Verificação.",
-    );
+    try {
+      const savedUser = localStorage.getItem("authenticatedUser");
+      if (!savedUser) {
+        toast({
+          title: "Erro",
+          description: "Usuário não autenticado",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const userData = JSON.parse(savedUser);
+      const userId = userData.userId;
+
+      if (!userId) {
+        toast({
+          title: "Erro",
+          description: "ID do usuário não encontrado",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Atualizar no Supabase
+      const currentTimestamp = new Date().toISOString();
+
+      const { error: updateError } = await supabase
+        .from("users")
+        .update({
+          full_name: data.name,
+          id_number: data.id,
+          vehicle_type: data.vehicleType,
+          vehicle_plate: data.vehiclePlate,
+          updated_at: currentTimestamp,
+        })
+        .eq("id", userId);
+
+      // Log the update operation for debugging
+      console.log("Profile update operation:", { userId, data, updateError });
+
+      if (updateError) {
+        console.error("Erro ao atualizar perfil:", updateError);
+        toast({
+          title: "Erro",
+          description: "Erro ao atualizar perfil. Tente novamente.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Atualizar no localStorage
+      localStorage.setItem("extractedName", data.name);
+      localStorage.setItem("extractedID", data.id);
+      localStorage.setItem("vehicleType", data.vehicleType || "");
+      localStorage.setItem("vehiclePlate", data.vehiclePlate || "");
+      localStorage.setItem("profileUpdatedAt", currentTimestamp);
+      setLastUpdateTimestamp(currentTimestamp);
+
+      // Atualizar dados do usuário autenticado
+      userData.fullName = data.name;
+      userData.idNumber = data.id;
+      userData.vehicleType = data.vehicleType || "";
+      userData.vehiclePlate = data.vehiclePlate || "";
+      userData.updatedAt = currentTimestamp;
+      localStorage.setItem("authenticatedUser", JSON.stringify(userData));
+
+      // Salvar dados completos do perfil
+      localStorage.setItem(
+        "profileData",
+        JSON.stringify({
+          fullName: data.name,
+          idNumber: data.id,
+          vehicleType: data.vehicleType,
+          vehiclePlate: data.vehiclePlate,
+          updatedAt: currentTimestamp,
+        }),
+      );
+
+      toast({
+        title: "Sucesso",
+        description: "Perfil atualizado com sucesso!",
+      });
+    } catch (error) {
+      console.error("Erro ao atualizar perfil:", error);
+      toast({
+        title: "Erro",
+        description: "Ocorreu um erro ao atualizar o perfil. Tente novamente.",
+        variant: "destructive",
+      });
+    }
   };
 
   const onPasswordSubmit = async (data: z.infer<typeof passwordFormSchema>) => {
     try {
       const savedUser = localStorage.getItem("authenticatedUser");
       if (!savedUser) {
-        alert("Usuário não autenticado");
+        toast({
+          title: "Erro",
+          description: "Usuário não autenticado",
+          variant: "destructive",
+        });
         return;
       }
 
       const userData = JSON.parse(savedUser);
-      const userEmail = userData.email || userData.phoneNumber;
+      const userId = userData.userId;
 
       // Verificar senha atual
       const { data: userCheck, error: checkError } = await supabase
         .from("users")
         .select("id, password")
-        .eq("email", userEmail)
+        .eq("id", userId)
         .eq("password", data.currentPassword)
         .single();
 
       if (checkError || !userCheck) {
-        alert("Senha atual incorreta. Por favor, tente novamente.");
+        toast({
+          title: "Erro",
+          description: "Senha atual incorreta. Por favor, tente novamente.",
+          variant: "destructive",
+        });
         return;
       }
 
@@ -292,7 +362,11 @@ const ConfigurationTab = ({
 
       if (updateError) {
         console.error("Erro ao atualizar senha:", updateError);
-        alert("Erro ao atualizar senha. Tente novamente.");
+        toast({
+          title: "Erro",
+          description: "Erro ao atualizar senha. Tente novamente.",
+          variant: "destructive",
+        });
         return;
       }
 
@@ -303,11 +377,18 @@ const ConfigurationTab = ({
       localStorage.setItem("passwordUpdatedAt", currentTimestamp);
       setLastUpdateTimestamp(currentTimestamp);
 
-      alert("Senha atualizada com sucesso!");
+      toast({
+        title: "Sucesso",
+        description: "Senha atualizada com sucesso!",
+      });
       passwordForm.reset();
     } catch (error) {
       console.error("Erro ao atualizar senha:", error);
-      alert("Ocorreu um erro ao atualizar a senha. Tente novamente.");
+      toast({
+        title: "Erro",
+        description: "Ocorreu um erro ao atualizar a senha. Tente novamente.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -319,7 +400,7 @@ const ConfigurationTab = ({
         if (!savedUser) return;
 
         const userData = JSON.parse(savedUser);
-        const userEmail = userData.email || userData.phoneNumber;
+        const userId = userData.userId;
 
         // Primeiro verificar se há dados no localStorage para resposta imediata
         const savedProfileData = localStorage.getItem("profileData");
@@ -351,8 +432,10 @@ const ConfigurationTab = ({
         // Buscar dados do usuário do Supabase como backup
         const { data: userProfile, error: userError } = await supabase
           .from("users")
-          .select("full_name, id_number, updated_at")
-          .eq("email", userEmail)
+          .select(
+            "full_name, id_number, vehicle_type, vehicle_plate, updated_at",
+          )
+          .eq("id", userId)
           .single();
 
         if (!userError && userProfile) {
@@ -362,6 +445,12 @@ const ConfigurationTab = ({
           }
           if (!extractedID && userProfile.id_number) {
             profileForm.setValue("id", userProfile.id_number);
+          }
+          if (!vehicleType && userProfile.vehicle_type) {
+            profileForm.setValue("vehicleType", userProfile.vehicle_type);
+          }
+          if (!vehiclePlate && userProfile.vehicle_plate) {
+            profileForm.setValue("vehiclePlate", userProfile.vehicle_plate);
           }
 
           if (
@@ -374,40 +463,29 @@ const ConfigurationTab = ({
         }
 
         // Buscar regiões do usuário
-        const { data: userData2, error: idError } = await supabase
-          .from("users")
-          .select("id")
-          .eq("email", userEmail)
-          .single();
-
-        if (idError || !userData2) return;
-
-        // Verificar primeiro se há dados no localStorage
-        const savedRegions = localStorage.getItem("userRegions");
-        if (savedRegions) {
-          const regions = JSON.parse(savedRegions);
-          setSelectedPrimaryRegion(regions.primaryRegion || "");
-          setSelectedBackupRegions(regions.backupRegions || []);
-
-          if (
-            regions.updatedAt &&
-            (!lastUpdateTimestamp ||
-              new Date(regions.updatedAt) > new Date(lastUpdateTimestamp))
-          ) {
-            setLastUpdateTimestamp(regions.updatedAt);
-          }
-        }
-
-        // Buscar do Supabase como backup
         const { data: regionsData, error: regionsError } = await supabase
           .from("regions")
           .select("primary_region, backup_regions, updated_at")
-          .eq("user_id", userData2.id)
+          .eq("user_id", userId)
           .single();
 
         if (!regionsError && regionsData) {
-          // Só atualizar se não tiver dados no localStorage
-          if (!savedRegions) {
+          // Verificar primeiro se há dados no localStorage
+          const savedRegions = localStorage.getItem("userRegions");
+          if (savedRegions) {
+            const regions = JSON.parse(savedRegions);
+            setSelectedPrimaryRegion(regions.primaryRegion || "");
+            setSelectedBackupRegions(regions.backupRegions || []);
+
+            if (
+              regions.updatedAt &&
+              (!lastUpdateTimestamp ||
+                new Date(regions.updatedAt) > new Date(lastUpdateTimestamp))
+            ) {
+              setLastUpdateTimestamp(regions.updatedAt);
+            }
+          } else {
+            // Só atualizar se não tiver dados no localStorage
             setSelectedPrimaryRegion(regionsData.primary_region || "");
             setSelectedBackupRegions(regionsData.backup_regions || []);
 
@@ -445,23 +523,35 @@ const ConfigurationTab = ({
   const onRegionsSubmit = async () => {
     try {
       if (!selectedPrimaryRegion) {
-        alert("Por favor, selecione uma região principal.");
+        toast({
+          title: "Erro",
+          description: "Por favor, selecione uma região principal.",
+          variant: "destructive",
+        });
         return;
       }
 
       if (selectedBackupRegions.length < 3) {
-        alert("Por favor, selecione 3 regiões de backup.");
+        toast({
+          title: "Erro",
+          description: "Por favor, selecione 3 regiões de backup.",
+          variant: "destructive",
+        });
         return;
       }
 
       const savedUser = localStorage.getItem("authenticatedUser");
       if (!savedUser) {
-        alert("Usuário não autenticado");
+        toast({
+          title: "Erro",
+          description: "Usuário não autenticado",
+          variant: "destructive",
+        });
         return;
       }
 
       const userData = JSON.parse(savedUser);
-      const userEmail = userData.email || userData.phoneNumber;
+      const userId = userData.userId;
 
       // Mostrar indicador de carregamento
       const saveButton = document.querySelector("#save-regions-button");
@@ -471,25 +561,11 @@ const ConfigurationTab = ({
       }
 
       try {
-        // Buscar o ID do usuário pelo email
-        const { data: userData2, error: userError } = await supabase
-          .from("users")
-          .select("id")
-          .eq("email", userEmail)
-          .single();
-
-        if (userError || !userData2) {
-          throw new Error(
-            "Erro ao buscar usuário: " +
-              (userError?.message || "Usuário não encontrado"),
-          );
-        }
-
         // Verificar se já existe um registro de regiões para este usuário
         const { data: existingRegions, error: checkError } = await supabase
           .from("regions")
           .select("id")
-          .eq("user_id", userData2.id);
+          .eq("user_id", userId);
 
         if (checkError) {
           throw new Error(
@@ -509,14 +585,14 @@ const ConfigurationTab = ({
               backup_regions: selectedBackupRegions,
               updated_at: currentTimestamp,
             })
-            .eq("user_id", userData2.id);
+            .eq("user_id", userId);
 
           regionsError = error;
         } else {
           // Inserir novas regiões
           const { error } = await supabase.from("regions").insert([
             {
-              user_id: userData2.id,
+              user_id: userId,
               primary_region: selectedPrimaryRegion,
               backup_regions: selectedBackupRegions,
               updated_at: currentTimestamp,
@@ -544,7 +620,10 @@ const ConfigurationTab = ({
         localStorage.setItem("regionsUpdatedAt", currentTimestamp);
         setLastUpdateTimestamp(currentTimestamp);
 
-        alert("Configurações de região salvas com sucesso!");
+        toast({
+          title: "Sucesso",
+          description: "Configurações de região salvas com sucesso!",
+        });
 
         // Restaurar o botão
         if (saveButton) {
@@ -557,11 +636,14 @@ const ConfigurationTab = ({
         setActiveTab("regions");
       } catch (dbError) {
         console.error("Erro de banco de dados:", dbError);
-        alert(
-          dbError instanceof Error
-            ? dbError.message
-            : "Erro ao salvar regiões. Tente novamente.",
-        );
+        toast({
+          title: "Erro",
+          description:
+            dbError instanceof Error
+              ? dbError.message
+              : "Erro ao salvar regiões. Tente novamente.",
+          variant: "destructive",
+        });
 
         // Restaurar o botão em caso de erro
         if (saveButton) {
@@ -572,39 +654,59 @@ const ConfigurationTab = ({
       }
     } catch (error) {
       console.error("Erro ao salvar regiões:", error);
-      alert("Ocorreu um erro ao salvar as regiões. Tente novamente.");
+      toast({
+        title: "Erro",
+        description: "Ocorreu um erro ao salvar as regiões. Tente novamente.",
+        variant: "destructive",
+      });
     }
   };
 
   return (
-    <div className="w-full h-full p-6 bg-background">
+    <div className="w-full h-full p-6 bg-gradient-to-br from-white to-orange-50 dark:from-gray-900 dark:to-gray-800">
       <div className="max-w-4xl mx-auto">
-        <h1 className="text-2xl font-bold mb-6">Configuração</h1>
+        <h1 className="text-2xl font-bold mb-6 text-orange-700 dark:text-orange-400 flex items-center">
+          <User className="h-6 w-6 mr-2" />
+          Configuração
+        </h1>
 
         {lastUpdateTimestamp && (
-          <div className="mb-4 p-2 bg-gray-50 border border-gray-200 rounded-md text-sm text-gray-600 flex items-center">
-            <Clock className="h-4 w-4 mr-2 text-gray-500" />
+          <div className="mb-4 p-2 bg-orange-50 border border-orange-200 rounded-md text-sm text-orange-700 flex items-center">
+            <Clock className="h-4 w-4 mr-2 text-orange-500" />
             Última atualização: {new Date(lastUpdateTimestamp).toLocaleString()}
           </div>
         )}
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-4 mb-8">
-            <TabsTrigger value="profile" className="flex items-center gap-2">
+        <Tabs
+          value={activeTab}
+          onValueChange={setActiveTab}
+          className="w-full bg-white dark:bg-gray-900 rounded-lg shadow-md overflow-hidden border border-orange-100 dark:border-orange-900"
+        >
+          <TabsList className="grid w-full grid-cols-4 mb-8 bg-orange-100 dark:bg-orange-900/30 p-1">
+            <TabsTrigger
+              value="profile"
+              className="flex items-center gap-2 data-[state=active]:bg-orange-500 data-[state=active]:text-white"
+            >
               <User className="h-4 w-4" />
               Informações do Perfil
             </TabsTrigger>
-            <TabsTrigger value="password" className="flex items-center gap-2">
+            <TabsTrigger
+              value="password"
+              className="flex items-center gap-2 data-[state=active]:bg-orange-500 data-[state=active]:text-white"
+            >
               <Lock className="h-4 w-4" />
               Alterar Senha
             </TabsTrigger>
-            <TabsTrigger value="regions" className="flex items-center gap-2">
+            <TabsTrigger
+              value="regions"
+              className="flex items-center gap-2 data-[state=active]:bg-orange-500 data-[state=active]:text-white"
+            >
               <MapPin className="h-4 w-4" />
               Atualizar Regiões
             </TabsTrigger>
             <TabsTrigger
               value="verification"
-              className="flex items-center gap-2"
+              className="flex items-center gap-2 data-[state=active]:bg-orange-500 data-[state=active]:text-white"
             >
               <Upload className="h-4 w-4" />
               Verificação
@@ -612,16 +714,21 @@ const ConfigurationTab = ({
           </TabsList>
 
           <TabsContent value="profile" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Informações do Perfil</CardTitle>
+            <Card className="border-orange-100 dark:border-orange-900 shadow-md">
+              <CardHeader className="bg-gradient-to-r from-orange-50 to-amber-50 dark:from-orange-950/50 dark:to-amber-950/50 border-b border-orange-100 dark:border-orange-900">
+                <CardTitle className="text-orange-700 dark:text-orange-400">
+                  Informações do Perfil
+                </CardTitle>
                 <CardDescription>
                   Atualize suas informações de forma correta para ser escalado!
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <Form {...profileForm}>
-                  <div className="space-y-6">
+                  <form
+                    onSubmit={profileForm.handleSubmit(onProfileSubmit)}
+                    className="space-y-6"
+                  >
                     <FormField
                       control={profileForm.control}
                       name="name"
@@ -632,13 +739,12 @@ const ConfigurationTab = ({
                             <Input
                               placeholder="Digite seu nome completo"
                               {...field}
-                              disabled={true}
+                              disabled={false}
                             />
                           </FormControl>
                           <FormDescription>
                             Este é seu nome completo como aparece em seu
-                            documento de identidade. Este campo só pode ser
-                            atualizado via verificação do Driver APP.
+                            documento de identidade.
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
@@ -654,12 +760,11 @@ const ConfigurationTab = ({
                             <Input
                               placeholder="Digite seu número de identificação"
                               {...field}
-                              disabled={true}
+                              disabled={false}
                             />
                           </FormControl>
                           <FormDescription>
-                            Seu número de identificação oficial. Este campo só
-                            pode ser atualizado via verificação do Driver APP.
+                            Seu número de identificação oficial.
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
@@ -676,12 +781,11 @@ const ConfigurationTab = ({
                             <Input
                               placeholder="Tipo de veículo"
                               {...field}
-                              disabled={true}
+                              disabled={false}
                             />
                           </FormControl>
                           <FormDescription>
-                            Tipo do seu veículo. Este campo só pode ser
-                            atualizado via verificação do Driver APP.
+                            Tipo do seu veículo.
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
@@ -698,35 +802,36 @@ const ConfigurationTab = ({
                             <Input
                               placeholder="Placa do veículo"
                               {...field}
-                              disabled={true}
+                              disabled={false}
                             />
                           </FormControl>
                           <FormDescription>
-                            Placa do seu veículo. Este campo só pode ser
-                            atualizado via verificação do Driver APP.
+                            Placa do seu veículo.
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
 
-                    <div className="flex items-center gap-2 p-4 bg-amber-50 rounded-md mb-4">
-                      <AlertTriangle className="h-5 w-5 text-amber-500" />
-                      <p className="text-sm text-amber-700">
-                        Para atualizar seus dados de identificação e veículo,
-                        utilize a verificação via Driver APP na aba Verificação.
-                      </p>
-                    </div>
-                  </div>
+                    <Button
+                      type="submit"
+                      className="w-full sm:w-auto bg-orange-500 hover:bg-orange-600 text-white"
+                    >
+                      <Save className="mr-2 h-4 w-4" />
+                      Atualizar Perfil
+                    </Button>
+                  </form>
                 </Form>
               </CardContent>
             </Card>
           </TabsContent>
 
           <TabsContent value="password" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Alterar Senha</CardTitle>
+            <Card className="border-orange-100 dark:border-orange-900 shadow-md">
+              <CardHeader className="bg-gradient-to-r from-orange-50 to-amber-50 dark:from-orange-950/50 dark:to-amber-950/50 border-b border-orange-100 dark:border-orange-900">
+                <CardTitle className="text-orange-700 dark:text-orange-400">
+                  Alterar Senha
+                </CardTitle>
                 <CardDescription>
                   Atualize sua senha. A senha deve ter pelo menos 5 dígitos.
                 </CardDescription>
@@ -791,7 +896,10 @@ const ConfigurationTab = ({
                         </FormItem>
                       )}
                     />
-                    <Button type="submit" className="w-full sm:w-auto">
+                    <Button
+                      type="submit"
+                      className="w-full sm:w-auto bg-orange-500 hover:bg-orange-600 text-white"
+                    >
                       <Save className="mr-2 h-4 w-4" />
                       Atualizar Senha
                     </Button>
@@ -802,9 +910,11 @@ const ConfigurationTab = ({
           </TabsContent>
 
           <TabsContent value="regions" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Atualizar Regiões</CardTitle>
+            <Card className="border-orange-100 dark:border-orange-900 shadow-md">
+              <CardHeader className="bg-gradient-to-r from-orange-50 to-amber-50 dark:from-orange-950/50 dark:to-amber-950/50 border-b border-orange-100 dark:border-orange-900">
+                <CardTitle className="text-orange-700 dark:text-orange-400">
+                  Atualizar Regiões
+                </CardTitle>
                 <CardDescription>
                   Selecione sua região principal e até 3 regiões de backup onde
                   você está disponível para trabalhar.
@@ -952,25 +1062,26 @@ const ConfigurationTab = ({
                                 <input
                                   type="checkbox"
                                   id={`region-${region}`}
-                                  checked={selectedBackupRegions.includes(
-                                    region,
-                                  )}
-                                  disabled={region === selectedPrimaryRegion}
-                                  className={`rounded border-gray-300 text-primary focus:ring-primary ${region === selectedPrimaryRegion ? "opacity-50" : ""}`}
+                                  checked={isChecked}
+                                  disabled={isDisabled}
                                   onChange={(e) => {
                                     if (e.target.checked) {
-                                      // Adicionar à lista se não estiver cheia
-                                      if (selectedBackupRegions.length < 3) {
+                                      // Adicionar à lista se não estiver lá
+                                      if (
+                                        selectedBackupRegions.length < 3 &&
+                                        !selectedBackupRegions.includes(region)
+                                      ) {
                                         setSelectedBackupRegions([
                                           ...selectedBackupRegions,
                                           region,
                                         ]);
-                                      } else {
-                                        e.preventDefault();
-                                        e.target.checked = false;
+                                      } else if (
+                                        selectedBackupRegions.length >= 3
+                                      ) {
                                         alert(
                                           "Você só pode selecionar até 3 regiões de backup.",
                                         );
+                                        e.target.checked = false;
                                       }
                                     } else {
                                       // Remover da lista
@@ -981,10 +1092,11 @@ const ConfigurationTab = ({
                                       );
                                     }
                                   }}
+                                  className="h-4 w-4 rounded border-gray-300 text-orange-600 focus:ring-orange-600"
                                 />
                                 <label
                                   htmlFor={`region-${region}`}
-                                  className={`text-sm ${isDisabled ? "opacity-50" : ""}`}
+                                  className={`text-sm ${isDisabled ? "text-gray-400" : "text-gray-700"}`}
                                 >
                                   {region}
                                 </label>
@@ -999,7 +1111,7 @@ const ConfigurationTab = ({
                   <Button
                     id="save-regions-button"
                     onClick={onRegionsSubmit}
-                    className="w-full sm:w-auto"
+                    className="w-full sm:w-auto bg-orange-500 hover:bg-orange-600 text-white"
                   >
                     <Save className="mr-2 h-4 w-4" />
                     Salvar Preferências de Região
@@ -1010,248 +1122,44 @@ const ConfigurationTab = ({
           </TabsContent>
 
           <TabsContent value="verification" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Verificação de Identidade</CardTitle>
+            <Card className="border-orange-100 dark:border-orange-900 shadow-md">
+              <CardHeader className="bg-gradient-to-r from-orange-50 to-amber-50 dark:from-orange-950/50 dark:to-amber-950/50 border-b border-orange-100 dark:border-orange-900">
+                <CardTitle className="text-orange-700 dark:text-orange-400">
+                  Verificação de Taxa de Entrega
+                </CardTitle>
                 <CardDescription>
-                  Verifique sua identidade para ativar sua conta e poder se
-                  disponibilizar para turnos.
+                  Verifique sua taxa de entrega para garantir que você receba o
+                  valor correto por suas entregas.
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  <div className="mb-4">
-                    {/* Status da verificação de identidade */}
-                    {(() => {
-                      const driverAppVerified =
-                        localStorage.getItem("driverAppVerified");
-                      const extractedName =
-                        localStorage.getItem("extractedName");
-                      const driverInfoUpdatedAt = localStorage.getItem(
-                        "driverInfoUpdatedAt",
-                      );
-                      const driverVerificationExpiration = localStorage.getItem(
-                        "driverVerificationExpiration",
-                      );
-
-                      if (driverAppVerified !== "true" || !extractedName) {
-                        return (
-                          <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md mb-4">
-                            <p className="text-yellow-800 font-medium">
-                              Verificação de Identidade Pendente
-                            </p>
-                            <p className="text-sm text-yellow-700 mt-1">
-                              Você precisa verificar sua identidade para ativar
-                              sua conta.
-                            </p>
-                          </div>
-                        );
-                      } else {
-                        // Verificar se a verificação está expirada
-                        let isExpired = false;
-                        let daysUntilExpiration = 0;
-
-                        if (driverVerificationExpiration) {
-                          const expirationDate = new Date(
-                            driverVerificationExpiration,
-                          );
-                          const now = new Date();
-                          isExpired = now > expirationDate;
-                          daysUntilExpiration = Math.ceil(
-                            (expirationDate.getTime() - now.getTime()) /
-                              (1000 * 60 * 60 * 24),
-                          );
-                        }
-
-                        if (isExpired) {
-                          return (
-                            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md mb-4">
-                              <p className="text-yellow-800 font-medium">
-                                Verificação de Identidade Expirada
-                              </p>
-                              <p className="text-sm text-yellow-700 mt-1">
-                                Sua verificação expirou. Por favor, verifique
-                                novamente.
-                              </p>
-                              {driverInfoUpdatedAt && (
-                                <p className="text-xs text-yellow-600 mt-2">
-                                  Última verificação:{" "}
-                                  {new Date(
-                                    driverInfoUpdatedAt,
-                                  ).toLocaleString()}
-                                </p>
-                              )}
-                            </div>
-                          );
-                        } else {
-                          return (
-                            <div className="p-4 bg-green-50 border border-green-200 rounded-md mb-4">
-                              <p className="text-green-800 font-medium">
-                                Verificação de Identidade Ativa
-                              </p>
-                              <p className="text-sm text-green-700 mt-1">
-                                Sua identidade foi verificada com sucesso.
-                                {driverVerificationExpiration &&
-                                  daysUntilExpiration <= 3 && (
-                                    <span className="font-bold">
-                                      {" "}
-                                      Expira em {daysUntilExpiration} dia(s).
-                                    </span>
-                                  )}
-                              </p>
-                              {driverInfoUpdatedAt && (
-                                <p className="text-xs text-green-600 mt-2">
-                                  Última verificação:{" "}
-                                  {new Date(
-                                    driverInfoUpdatedAt,
-                                  ).toLocaleString()}
-                                </p>
-                              )}
-                              {driverVerificationExpiration && (
-                                <p className="text-xs text-green-600 mt-1">
-                                  Válida até:{" "}
-                                  {new Date(
-                                    driverVerificationExpiration,
-                                  ).toLocaleDateString()}
-                                </p>
-                              )}
-                            </div>
-                          );
-                        }
-                      }
-                    })()}
-
-                    {/* Status da verificação de taxa de entrega */}
-                    {(() => {
-                      const deliveryFee = localStorage.getItem("deliveryFee");
-                      const verificationExpiration = localStorage.getItem(
-                        "verificationExpiration",
-                      );
-                      const verificationUpdatedAt = localStorage.getItem(
-                        "verificationUpdatedAt",
-                      );
-
-                      if (!deliveryFee) {
-                        return (
-                          <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md mb-4">
-                            <p className="text-yellow-800 font-medium">
-                              Verificação de Taxa de Entrega Pendente
-                            </p>
-                            <p className="text-sm text-yellow-700 mt-1">
-                              Você precisa verificar sua taxa de entrega para
-                              ativar sua conta.
-                            </p>
-                          </div>
-                        );
-                      }
-
-                      const now = new Date();
-                      const expirationDate = verificationExpiration
-                        ? new Date(verificationExpiration)
-                        : null;
-
-                      if (expirationDate && now < expirationDate) {
-                        return (
-                          <div className="p-4 bg-green-50 border border-green-200 rounded-md mb-4">
-                            <p className="text-green-800 font-medium">
-                              Verificação de Taxa de Entrega Ativa
-                            </p>
-                            <p className="text-sm text-green-700 mt-1">
-                              Sua verificação é válida até{" "}
-                              {expirationDate.toLocaleDateString()}. Porcentagem
-                              de entrega: {deliveryFee}%
-                            </p>
-                            {verificationUpdatedAt && (
-                              <p className="text-xs text-green-600 mt-2">
-                                Última verificação:{" "}
-                                {new Date(
-                                  verificationUpdatedAt,
-                                ).toLocaleString()}
-                              </p>
-                            )}
-                          </div>
-                        );
-                      } else if (expirationDate) {
-                        return (
-                          <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md mb-4">
-                            <p className="text-yellow-800 font-medium">
-                              Verificação de Taxa de Entrega Expirada
-                            </p>
-                            <p className="text-sm text-yellow-700 mt-1">
-                              Sua verificação expirou. Por favor, verifique
-                              novamente.
-                            </p>
-                            {verificationUpdatedAt && (
-                              <p className="text-xs text-yellow-600 mt-2">
-                                Última verificação:{" "}
-                                {new Date(
-                                  verificationUpdatedAt,
-                                ).toLocaleString()}
-                              </p>
-                            )}
-                          </div>
-                        );
-                      } else {
-                        return (
-                          <div className="p-4 bg-red-50 border border-red-200 rounded-md mb-4">
-                            <p className="text-red-800 font-medium">
-                              Verificação de Taxa de Entrega Pendente
-                            </p>
-                            <p className="text-sm text-red-700 mt-1">
-                              Você precisa verificar sua taxa de entrega para
-                              poder se disponibilizar para turnos.
-                            </p>
-                          </div>
-                        );
-                      }
-                    })()}
-                  </div>
-
-                  <div className="border-t pt-4">
-                    <h3 className="text-lg font-medium mb-4">
-                      Verificação de Identidade via Driver APP
-                    </h3>
-                    <DriverAppVerification
-                      onVerificationComplete={(driverInfo) => {
-                        console.log(
-                          "Informações do motorista verificadas:",
-                          driverInfo,
-                        );
-                        // Atualizar o timestamp da última verificação
-                        const currentTimestamp = new Date().toISOString();
-                        localStorage.setItem(
-                          "driverInfoUpdatedAt",
-                          currentTimestamp,
-                        );
-                        setLastUpdateTimestamp(currentTimestamp);
-                        // Forçar atualização da página para refletir a nova verificação
-                        window.location.reload();
-                      }}
-                    />
-                  </div>
-
-                  <div className="border-t pt-4 mt-6">
-                    <h3 className="text-lg font-medium mb-4">
-                      Verificação de Taxa de Entrega
-                    </h3>
-                    <DeliveryRateVerification
-                      onVerificationComplete={(deliveryFee) => {
-                        console.log("Taxa de entrega verificada:", deliveryFee);
-                        // Atualizar o timestamp da última verificação
-                        const currentTimestamp = new Date().toISOString();
-                        localStorage.setItem(
-                          "verificationUpdatedAt",
-                          currentTimestamp,
-                        );
-                        setLastUpdateTimestamp(currentTimestamp);
-                        // Forçar atualização da página para refletir a nova verificação
-                        window.location.reload();
-                      }}
-                    />
-                  </div>
-                </div>
+                <DeliveryRateVerification />
               </CardContent>
             </Card>
+
+            {configIssues.length > 0 && (
+              <Card className="border-orange-200 bg-orange-50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-orange-700 flex items-center">
+                    <AlertTriangle className="h-5 w-5 mr-2" />
+                    Atenção
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ul className="space-y-2">
+                    {configIssues.map((issue, index) => (
+                      <li
+                        key={index}
+                        className="text-orange-700 flex items-start"
+                      >
+                        <span className="mr-2">•</span>
+                        <span>{issue}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
         </Tabs>
       </div>

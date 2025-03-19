@@ -31,7 +31,21 @@ import {
   Filter,
   RefreshCw,
   Clock,
+  CheckCircle,
+  XCircle,
+  HourglassIcon,
+  User,
+  Car,
+  CheckCheck,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import RouteDetails from "./RouteDetails";
 
 interface RouteData {
@@ -49,7 +63,292 @@ interface RouteData {
   isAssigned?: boolean;
   selected?: boolean;
   rawData?: any[];
+  is_pending?: boolean;
+  pending_since?: string;
 }
+
+// Componente para exibir informações dos motoristas pendentes
+const PendingDriverInfo = ({ routeId }: { routeId: string }) => {
+  const [driversInfo, setDriversInfo] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const fetchDriversInfo = async () => {
+      try {
+        // Buscar todas as atribuições de rota pendentes para esta rota
+        const { data: assignmentsData, error: assignmentsError } =
+          await supabase
+            .from("route_assignments")
+            .select("*")
+            .eq("route_id", routeId)
+            .eq("status", "pending");
+
+        if (
+          assignmentsError ||
+          !assignmentsData ||
+          assignmentsData.length === 0
+        ) {
+          console.error("Erro ao buscar atribuições:", assignmentsError);
+          setIsLoading(false);
+          return;
+        }
+
+        // Buscar informações de todos os motoristas
+        const driversData = [];
+        for (const assignment of assignmentsData) {
+          // Buscar informações do motorista
+          const { data: userData, error: userError } = await supabase
+            .from("users")
+            .select("id, full_name, phone_number")
+            .eq("id", assignment.driver_id)
+            .single();
+
+          if (userError || !userData) {
+            console.error("Erro ao buscar usuário:", userError);
+            continue;
+          }
+
+          // Buscar informações de região do motorista
+          const { data: regionData, error: regionError } = await supabase
+            .from("regions")
+            .select("primary_region")
+            .eq("user_id", userData.id)
+            .single();
+
+          driversData.push({
+            ...userData,
+            assignmentId: assignment.id,
+            region: regionData?.primary_region || "Não definida",
+            vehicle: "Carro", // Valor padrão, poderia vir de uma tabela de veículos
+          });
+        }
+
+        setDriversInfo(driversData);
+      } catch (error) {
+        console.error("Erro ao buscar informações dos motoristas:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchDriversInfo();
+  }, [routeId]);
+
+  const handleApproveReject = async (
+    driverId: string,
+    assignmentId: string,
+    approve: boolean,
+  ) => {
+    try {
+      setIsLoading(true);
+
+      // Atualizar status da atribuição
+      const { error: updateError } = await supabase
+        .from("route_assignments")
+        .update({
+          status: approve ? "approved" : "rejected",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", assignmentId);
+
+      if (updateError) throw updateError;
+
+      // Se aprovado, atualizar a rota como atribuída
+      if (approve) {
+        // Primeiro, rejeitar todas as outras solicitações para esta rota
+        const { error: rejectError } = await supabase
+          .from("route_assignments")
+          .update({
+            status: "rejected",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("route_id", routeId)
+          .neq("id", assignmentId);
+
+        if (rejectError) {
+          console.error("Erro ao rejeitar outras solicitações:", rejectError);
+        }
+
+        // Obter nome do motorista aprovado
+        const selectedDriver = driversInfo.find(
+          (d) => d.assignmentId === assignmentId,
+        );
+        const driverName = selectedDriver
+          ? selectedDriver.full_name
+          : "Motorista";
+
+        // Atualizar a rota como atribuída
+        const { error: routeError } = await supabase
+          .from("routes")
+          .update({
+            is_pending: false,
+            is_assigned: true,
+            assigned_driver: driverName,
+            driver_id: driverId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", routeId);
+
+        if (routeError) throw routeError;
+      } else {
+        // Se rejeitado, verificar se ainda há solicitações pendentes
+        const { data: pendingAssignments, error: checkError } = await supabase
+          .from("route_assignments")
+          .select("id")
+          .eq("route_id", routeId)
+          .eq("status", "pending");
+
+        // Se não houver mais solicitações pendentes, remover o status de pendente da rota
+        if (
+          !checkError &&
+          (!pendingAssignments || pendingAssignments.length === 0)
+        ) {
+          const { error: routeError } = await supabase
+            .from("routes")
+            .update({
+              is_pending: false,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", routeId);
+
+          if (routeError) throw routeError;
+        }
+      }
+
+      // Atualizar a lista de motoristas
+      const selectedDriver = driversInfo.find(
+        (d) => d.assignmentId === assignmentId,
+      );
+      const driverName = selectedDriver
+        ? selectedDriver.full_name
+        : "Motorista";
+
+      toast({
+        title: approve ? "Solicitação aprovada" : "Solicitação recusada",
+        description: `A solicitação do motorista ${driverName} foi ${approve ? "aprovada" : "recusada"} com sucesso.`,
+        variant: "default",
+      });
+
+      // Atualizar a lista de motoristas
+      setDriversInfo((prevDrivers) => {
+        return prevDrivers.map((driver) => {
+          if (driver.assignmentId === assignmentId) {
+            return { ...driver, status: approve ? "approved" : "rejected" };
+          } else if (approve) {
+            // Se um motorista foi aprovado, todos os outros são automaticamente rejeitados
+            return { ...driver, status: "rejected" };
+          }
+          return driver;
+        });
+      });
+    } catch (error) {
+      console.error("Erro ao processar solicitação:", error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível processar a solicitação.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center p-2">
+        <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+        <span className="ml-2 text-sm text-amber-700">Carregando...</span>
+      </div>
+    );
+  }
+
+  if (!driversInfo || driversInfo.length === 0) {
+    return (
+      <div className="text-sm text-amber-700 pl-6">
+        Nenhuma informação disponível sobre os motoristas.
+      </div>
+    );
+  }
+
+  return (
+    <div className="pl-6 space-y-4">
+      <h4 className="font-medium text-amber-800">
+        Motoristas solicitando esta rota:
+      </h4>
+
+      {driversInfo.map((driver) => (
+        <div
+          key={driver.assignmentId}
+          className="border-b border-amber-100 pb-3 last:border-0"
+        >
+          {/* Se já foi processado, mostrar apenas o status */}
+          {driver.status ? (
+            <div
+              className={`flex items-center gap-2 ${driver.status === "approved" ? "text-green-700" : "text-red-700"}`}
+            >
+              {driver.status === "approved" ? (
+                <>
+                  <CheckCircle className="h-4 w-4" />
+                  <span>Solicitação de {driver.full_name} aprovada</span>
+                </>
+              ) : (
+                <>
+                  <XCircle className="h-4 w-4" />
+                  <span>Solicitação de {driver.full_name} recusada</span>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <User className="h-4 w-4 text-amber-600" />
+                <span className="text-sm text-amber-700">
+                  {driver.full_name}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Car className="h-4 w-4 text-amber-600" />
+                <span className="text-sm text-amber-700">{driver.vehicle}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-amber-600" />
+                <span className="text-sm text-amber-700">{driver.region}</span>
+              </div>
+
+              <div className="flex justify-end gap-2 mt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full border-red-200 hover:bg-red-50 text-red-600"
+                  onClick={() =>
+                    handleApproveReject(driver.id, driver.assignmentId, false)
+                  }
+                  disabled={isLoading}
+                >
+                  <XCircle className="h-3.5 w-3.5 mr-1" />
+                  Recusar
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full border-green-200 hover:bg-green-50 text-green-600"
+                  onClick={() =>
+                    handleApproveReject(driver.id, driver.assignmentId, true)
+                  }
+                  disabled={isLoading}
+                >
+                  <CheckCircle className="h-3.5 w-3.5 mr-1" />
+                  Aprovar
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
 
 const AvailableRoutes = () => {
   const { toast } = useToast();
@@ -93,6 +392,9 @@ const AvailableRoutes = () => {
           detail: { notifications: updatedNotifications },
         }),
       );
+
+      // Também disparar evento de notificação para compatibilidade
+      window.dispatchEvent(new CustomEvent("notification-added"));
 
       // Também disparar evento de armazenamento para compatibilidade
       window.dispatchEvent(
@@ -153,6 +455,8 @@ const AvailableRoutes = () => {
   const [selectedRoutes, setSelectedRoutes] = useState<string[]>([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showPendingOnly, setShowPendingOnly] = useState(false);
+  const [showAssignedOnly, setShowAssignedOnly] = useState(false);
 
   // Função para lidar com eventos de atualização de rotas
   useEffect(() => {
@@ -202,7 +506,9 @@ const AvailableRoutes = () => {
       // Buscar rotas do Supabase com limite para melhorar performance
       const { data, error } = await supabase
         .from("routes")
-        .select("*")
+        .select(
+          "*, route_assignments(id, driver_id, status, created_at, updated_at)",
+        )
         .order("created_at", { ascending: false });
 
       console.log("Resposta do Supabase:", { data, error });
@@ -231,6 +537,8 @@ const AvailableRoutes = () => {
           deliveryRate: route.delivery_rate || undefined,
           isAssigned: !!route.assigned_driver,
           rawData: route.raw_data || undefined,
+          is_pending: route.is_pending || false,
+          pending_since: route.pending_since || null,
         }));
 
         setRoutes(formattedRoutes);
@@ -359,6 +667,18 @@ const AvailableRoutes = () => {
       console.log(`Após filtro de busca (${search}):`, filtered.length);
     }
 
+    // Filtrar apenas rotas pendentes se a opção estiver ativada
+    if (showPendingOnly) {
+      filtered = filtered.filter((route) => route.is_pending === true);
+      console.log(`Após filtro de pendentes:`, filtered.length);
+    }
+
+    // Filtrar apenas rotas atribuídas se a opção estiver ativada
+    if (showAssignedOnly) {
+      filtered = filtered.filter((route) => route.isAssigned === true);
+      console.log(`Após filtro de atribuídas:`, filtered.length);
+    }
+
     console.log("Rotas filtradas final:", filtered.length);
     setFilteredRoutes(filtered);
   };
@@ -374,7 +694,14 @@ const AvailableRoutes = () => {
     }, 150); // Pequeno delay para evitar múltiplas renderizações
 
     return () => clearTimeout(debouncedFilter);
-  }, [selectedShift, selectedDate, searchTerm, routes]);
+  }, [
+    selectedShift,
+    selectedDate,
+    searchTerm,
+    routes,
+    showPendingOnly,
+    showAssignedOnly,
+  ]);
 
   // Formatar data para exibição
   const formatDate = (dateString: string) => {
@@ -456,6 +783,24 @@ const AvailableRoutes = () => {
       if (deleteError) {
         console.error(`Erro ao excluir rotas:`, deleteError);
         throw deleteError;
+      }
+
+      // Cancelar todas as atribuições relacionadas a estas rotas
+      const { data: assignmentsData, error: assignmentsError } = await supabase
+        .from("route_assignments")
+        .select("id")
+        .in("route_id", selectedRoutes);
+
+      if (!assignmentsError && assignmentsData && assignmentsData.length > 0) {
+        const assignmentIds = assignmentsData.map((a) => a.id);
+        const { error: updateError } = await supabase
+          .from("route_assignments")
+          .update({ status: "cancelled" })
+          .in("id", assignmentIds);
+
+        if (updateError) {
+          console.error("Erro ao cancelar atribuições de rota:", updateError);
+        }
       }
 
       // Remover também do localStorage se existir
@@ -628,7 +973,7 @@ const AvailableRoutes = () => {
 
       {/* Ações em massa */}
       <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-orange-100">
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Button
             variant="outline"
             size="sm"
@@ -654,6 +999,38 @@ const AvailableRoutes = () => {
               Excluir ({selectedRoutes.length})
             </Button>
           )}
+
+          <Button
+            variant={showPendingOnly ? "default" : "outline"}
+            size="sm"
+            className={`rounded-full shadow-sm transition-all duration-200 ${showPendingOnly ? "bg-amber-500 text-white" : "border-amber-200 text-amber-700 hover:bg-amber-50"}`}
+            onClick={() => {
+              setShowPendingOnly(!showPendingOnly);
+              if (showPendingOnly) {
+                // Se estamos desativando o filtro de pendentes, também desativamos o de atribuídas
+                setShowAssignedOnly(false);
+              }
+            }}
+          >
+            <HourglassIcon className="h-4 w-4 mr-1" />
+            {showPendingOnly ? "Mostrando Pendentes" : "Mostrar Pendentes"}
+          </Button>
+
+          <Button
+            variant={showAssignedOnly ? "default" : "outline"}
+            size="sm"
+            className={`rounded-full shadow-sm transition-all duration-200 ${showAssignedOnly ? "bg-green-500 text-white" : "border-green-200 text-green-700 hover:bg-green-50"}`}
+            onClick={() => {
+              setShowAssignedOnly(!showAssignedOnly);
+              if (showAssignedOnly) {
+                // Se estamos desativando o filtro de atribuídas, também desativamos o de pendentes
+                setShowPendingOnly(false);
+              }
+            }}
+          >
+            <CheckCheck className="h-4 w-4 mr-1" />
+            {showAssignedOnly ? "Mostrando Atribuídas" : "Mostrar Atribuídas"}
+          </Button>
         </div>
         <div className="text-sm text-gray-500 italic">
           {filteredRoutes.length} rota(s) encontrada(s)
@@ -676,321 +1053,315 @@ const AvailableRoutes = () => {
           {filteredRoutes.map((route) => (
             <Card
               key={route.id}
-              className={`overflow-hidden hover:shadow-lg transition-all duration-300 rounded-xl h-full ${selectedRoutes.includes(route.id) ? "border-blue-300 bg-blue-50/70" : route.isAssigned ? "border-green-300 bg-green-50/70" : "border-orange-200"}`}
+              className={`overflow-hidden hover:shadow-lg transition-all duration-300 rounded-xl h-full ${selectedRoutes.includes(route.id) ? "border-orange-500 bg-orange-50" : route.is_pending ? "border-amber-300 bg-amber-50" : route.isAssigned ? "border-green-300 bg-green-50" : "border-gray-200"}`}
             >
-              <CardContent className="p-0 h-full flex flex-col">
-                <div
-                  className={`p-4 ${route.isAssigned ? "bg-gradient-to-r from-green-100 to-green-50/50 border-b border-green-200" : "bg-gradient-to-r from-orange-100 to-orange-50/50 border-b border-orange-200"}`}
-                >
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <Badge
-                      variant="outline"
-                      className={`shadow-sm ${getShiftBadgeClass(route.shift)} rounded-full px-2 py-0.5 text-xs`}
-                    >
-                      {formatShift(route.shift)}
-                    </Badge>
-                    <Badge
-                      variant="outline"
-                      className="text-xs font-medium bg-white/80 backdrop-blur-sm shadow-sm px-2 py-0.5 rounded-full"
-                    >
-                      {formatDate(route.date)}
-                    </Badge>
-                  </div>
-
-                  <div className="flex items-center gap-2 mb-2">
-                    <MapPin className="h-4 w-4 text-orange-500 flex-shrink-0" />
-                    <h3 className="text-lg font-bold text-orange-700 truncate">
-                      {route.city}
-                    </h3>
-                  </div>
-
-                  <div className="flex flex-wrap gap-1 mb-3 max-h-16 overflow-y-auto">
-                    {route.neighborhoods
-                      .slice(0, 3)
-                      .map((neighborhood, index) => (
-                        <Badge
-                          key={index}
-                          variant="outline"
-                          className="bg-white/80 backdrop-blur-sm shadow-sm rounded-full px-2 py-0.5 text-xs text-gray-700"
-                        >
-                          {neighborhood}
-                        </Badge>
-                      ))}
-                    {route.neighborhoods.length > 3 && (
+              <CardContent className="p-0">
+                <div className="relative">
+                  {/* Header with route info */}
+                  <div className="bg-gradient-to-r from-orange-500 to-orange-600 p-3 text-white">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Package className="h-5 w-5" />
+                        <h3 className="font-bold text-lg">
+                          Rota {route.fileName.split(" ").pop()}
+                        </h3>
+                      </div>
                       <Badge
                         variant="outline"
-                        className="bg-orange-50 text-orange-600 rounded-full px-2 py-0.5 text-xs"
+                        className={
+                          route.shift === "AM"
+                            ? "bg-blue-100 text-blue-800 border-blue-200"
+                            : route.shift === "PM"
+                              ? "bg-orange-100 text-orange-800 border-orange-200"
+                              : "bg-purple-100 text-purple-800 border-purple-200"
+                        }
                       >
-                        +{route.neighborhoods.length - 3} mais
+                        {route.shift}
                       </Badge>
-                    )}
+                    </div>
                   </div>
-                </div>
 
-                <div className="p-4 flex-1 flex flex-col justify-between">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-full shadow-sm">
-                        <Package className="h-4 w-4 text-orange-500" />
-                        <span className="text-sm font-medium">
-                          {route.sequence} pacotes
+                  {/* Route content */}
+                  <div className="p-4 space-y-3">
+                    <div className="flex items-center space-x-2">
+                      <MapPin className="h-4 w-4 text-orange-500" />
+                      <span className="font-medium">{route.city}</span>
+                    </div>
+
+                    {/* Toggle neighborhoods */}
+                    <div>
+                      <button
+                        className="text-sm text-orange-600 hover:text-orange-700 flex items-center space-x-1 mb-2"
+                        onClick={() =>
+                          setShowNeighborhoods({
+                            ...showNeighborhoods,
+                            [route.id]: !showNeighborhoods[route.id],
+                          })
+                        }
+                      >
+                        <Map className="h-3.5 w-3.5" />
+                        <span>
+                          {showNeighborhoods[route.id]
+                            ? "Ocultar bairros"
+                            : "Mostrar bairros"}
                         </span>
+                      </button>
+
+                      {showNeighborhoods[route.id] && (
+                        <div className="bg-orange-50 p-2 rounded-md text-sm">
+                          <span className="font-medium text-orange-700">
+                            Bairros:
+                          </span>
+                          <ul className="mt-1 space-y-1 text-gray-700">
+                            {route.neighborhoods
+                              .slice(0, 3)
+                              .map((neighborhood, idx) => (
+                                <li key={idx} className="flex items-center">
+                                  <span className="w-1.5 h-1.5 bg-orange-400 rounded-full mr-2"></span>
+                                  {neighborhood}
+                                </li>
+                              ))}
+                            {route.neighborhoods.length > 3 && (
+                              <li className="text-gray-500 text-xs italic pl-4">
+                                + {route.neighborhoods.length - 3} outros
+                                bairros
+                              </li>
+                            )}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="flex items-center space-x-2 bg-orange-50 p-2 rounded-md">
+                        <Truck className="h-4 w-4 text-orange-500" />
+                        <div>
+                          <span className="font-medium text-orange-700">
+                            Distância:
+                          </span>{" "}
+                          <span>{route.totalDistance.toFixed(1)} km</span>
+                        </div>
                       </div>
-
-                      <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-full shadow-sm">
-                        <Route className="h-4 w-4 text-orange-500" />
-                        <span className="text-sm font-medium">
-                          {typeof route.totalDistance === "string"
-                            ? route.totalDistance
-                            : `${route.totalDistance.toFixed(1)} km`}
-                        </span>
+                      <div className="flex items-center space-x-2 bg-orange-50 p-2 rounded-md">
+                        <Package className="h-4 w-4 text-orange-500" />
+                        <div>
+                          <span className="font-medium text-orange-700">
+                            Pacotes:
+                          </span>{" "}
+                          <span>{route.rawData?.length || 0}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2 bg-orange-50 p-2 rounded-md">
+                        <Calendar className="h-4 w-4 text-orange-500" />
+                        <span>{formatDate(route.date)}</span>
                       </div>
                     </div>
 
+                    {/* Route assignment status */}
                     {route.isAssigned && (
-                      <div className="bg-green-50 border border-green-100 rounded-lg p-3">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Truck className="h-4 w-4 text-green-600" />
-                          <span className="font-medium text-green-700">
-                            Motorista Atribuído
+                      <div className="mt-2">
+                        <div className="flex items-center space-x-2 bg-green-100 text-green-800 p-2 rounded-md">
+                          <CheckCircle className="h-4 w-4" />
+                          <span className="font-medium">
+                            Rota atribuída a {route.assignedDriver}
                           </span>
                         </div>
-                        <div className="text-sm text-green-700 pl-6">
-                          {route.assignedDriver}
+                      </div>
+                    )}
+
+                    {/* Pending driver info */}
+                    {route.is_pending && (
+                      <div className="mt-2">
+                        <div className="flex items-center space-x-2 bg-amber-100 text-amber-800 p-2 rounded-md">
+                          <HourglassIcon className="h-4 w-4" />
+                          <span className="font-medium">
+                            Solicitação pendente
+                          </span>
                         </div>
-                      </div>
-                    )}
-                  </div>
 
-                  <div className="flex justify-between items-center mt-4 pt-3 border-t border-gray-100">
-                    {multiSelectMode ? (
-                      <Checkbox
-                        checked={selectedRoutes.includes(route.id)}
-                        onCheckedChange={(checked) => {
-                          if (checked) {
-                            setSelectedRoutes((prev) => [...prev, route.id]);
-                          } else {
-                            setSelectedRoutes((prev) =>
-                              prev.filter((id) => id !== route.id),
-                            );
+                        <button
+                          className="text-sm text-amber-600 hover:text-amber-700 flex items-center space-x-1 mt-2"
+                          onClick={() =>
+                            setShowDriverInfo({
+                              ...showDriverInfo,
+                              [route.id]: !showDriverInfo[route.id],
+                            })
                           }
-                        }}
-                        className="h-5 w-5 border-orange-300 text-orange-500"
-                      />
-                    ) : (
-                      <div className="text-xs text-gray-500">
-                        ID: {route.id.substring(0, 8)}...
+                        >
+                          <User className="h-3.5 w-3.5" />
+                          <span>
+                            {showDriverInfo[route.id]
+                              ? "Ocultar informações"
+                              : "Mostrar informações do motorista"}
+                          </span>
+                        </button>
+
+                        {showDriverInfo[route.id] && (
+                          <div className="mt-2 bg-amber-50 rounded-md overflow-hidden">
+                            <PendingDriverInfo routeId={route.id} />
+                          </div>
+                        )}
                       </div>
                     )}
 
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="rounded-full border-orange-200 hover:bg-orange-50 hover:text-orange-700 transition-all duration-200 shadow-sm"
-                        onClick={() => handleViewRouteDetails(route)}
-                      >
-                        <Eye className="h-4 w-4 mr-1 text-orange-500" />
-                        Detalhes
-                      </Button>
+                    {/* Actions */}
+                    <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-200">
+                      {multiSelectMode ? (
+                        <div className="flex items-center">
+                          <Checkbox
+                            id={`select-${route.id}`}
+                            checked={selectedRoutes.includes(route.id)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setSelectedRoutes([
+                                  ...selectedRoutes,
+                                  route.id,
+                                ]);
+                              } else {
+                                setSelectedRoutes(
+                                  selectedRoutes.filter(
+                                    (id) => id !== route.id,
+                                  ),
+                                );
+                              }
+                            }}
+                            className="data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
+                          />
+                          <Label
+                            htmlFor={`select-${route.id}`}
+                            className="ml-2 text-sm text-gray-700"
+                          >
+                            Selecionar
+                          </Label>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-full border-orange-200 hover:bg-orange-50 text-orange-700"
+                          onClick={() => handleViewRouteDetails(route)}
+                        >
+                          <Eye className="h-3.5 w-3.5 mr-1" />
+                          Detalhes
+                        </Button>
+                      )}
 
                       {!multiSelectMode && (
                         <Button
                           variant="outline"
                           size="sm"
-                          className="text-red-600 border-red-200 hover:bg-red-50 rounded-full shadow-sm transition-all duration-200"
-                          onClick={() => setDeleteConfirmId(route.id)}
+                          className="rounded-full border-red-200 hover:bg-red-50 text-red-600"
+                          onClick={() => {
+                            setDeleteConfirmId(route.id);
+                            setShowDeleteConfirm(true);
+                          }}
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="h-3.5 w-3.5 mr-1" />
+                          Excluir
                         </Button>
                       )}
                     </div>
                   </div>
-
-                  {/* Confirmação de exclusão */}
-                  {deleteConfirmId === route.id && (
-                    <div className="absolute inset-0 bg-white/95 backdrop-blur-sm flex items-center justify-center p-4 rounded-xl z-10">
-                      <div className="bg-white p-4 rounded-lg border border-red-100 shadow-lg max-w-xs w-full">
-                        <div className="flex items-center gap-2 mb-3 text-red-600">
-                          <AlertTriangle className="h-5 w-5" />
-                          <span className="font-medium">
-                            Confirmar exclusão
-                          </span>
-                        </div>
-                        <p className="text-sm text-gray-600 mb-4">
-                          Tem certeza que deseja excluir esta rota? Esta ação
-                          não pode ser desfeita.
-                        </p>
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="rounded-full shadow-sm"
-                            onClick={() => setDeleteConfirmId(null)}
-                          >
-                            Cancelar
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            className="rounded-full shadow-sm"
-                            onClick={async () => {
-                              try {
-                                setIsLoading(true);
-                                // Excluir a rota do Supabase
-                                const { error } = await supabase
-                                  .from("routes")
-                                  .delete()
-                                  .eq("id", route.id);
-
-                                // Verificar se a exclusão foi bem-sucedida
-                                if (error) {
-                                  console.error(
-                                    `Erro ao excluir rota ${route.id}:`,
-                                    error,
-                                  );
-                                  throw error;
-                                }
-
-                                // Remover também do localStorage se existir
-                                const savedRoutes =
-                                  localStorage.getItem("importedRoutes");
-                                if (savedRoutes) {
-                                  const parsedRoutes = JSON.parse(savedRoutes);
-                                  const updatedRoutes = parsedRoutes.filter(
-                                    (r: any) => r.id !== route.id,
-                                  );
-                                  localStorage.setItem(
-                                    "importedRoutes",
-                                    JSON.stringify(updatedRoutes),
-                                  );
-                                }
-
-                                // Atualizar a lista de rotas após exclusão
-                                setRoutes((prev) =>
-                                  prev.filter((r) => r.id !== route.id),
-                                );
-                                setFilteredRoutes((prev) =>
-                                  prev.filter((r) => r.id !== route.id),
-                                );
-                                setDeleteConfirmId(null);
-
-                                // Adicionar notificação para a rota excluída
-                                const notificationTitle = "Rota excluída";
-                                const notificationMessage = `A rota ${route.city} (${route.fileName}) foi excluída com sucesso.`;
-                                addNotification(
-                                  notificationTitle,
-                                  notificationMessage,
-                                );
-
-                                // Mostrar notificação de sucesso
-                                toast({
-                                  title: "Rota excluída",
-                                  description: `A rota ${route.city} foi excluída com sucesso.`,
-                                  variant: "default",
-                                });
-
-                                // Forçar uma atualização imediata
-                                setTimeout(() => {
-                                  fetchRoutes();
-                                }, 500);
-                              } catch (error) {
-                                console.error("Erro ao excluir rota:", error);
-                                toast({
-                                  title: "Erro ao excluir",
-                                  description:
-                                    "Não foi possível excluir a rota. Tente novamente.",
-                                  variant: "destructive",
-                                });
-                              } finally {
-                                setIsLoading(false);
-                              }
-                            }}
-                          >
-                            Excluir
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </CardContent>
             </Card>
           ))}
         </div>
       ) : (
-        <div className="text-center p-10 bg-gradient-to-b from-orange-50 to-white rounded-xl border border-orange-100 shadow-sm">
-          <Map className="h-16 w-16 text-orange-300 mx-auto mb-4" />
-          <h3 className="text-xl font-medium text-orange-700 mb-2">
+        <div className="flex flex-col justify-center items-center p-12 bg-white rounded-xl shadow-md border border-orange-100">
+          <Package className="h-16 w-16 text-orange-200 mb-4" />
+          <h3 className="text-xl font-medium text-gray-700 mb-2">
             Nenhuma rota encontrada
           </h3>
-          <p className="text-gray-600 mb-6 max-w-md mx-auto">
-            Não foram encontradas rotas com os filtros selecionados. Tente
-            ajustar os critérios de busca ou importar novas rotas.
+          <p className="text-gray-500 text-center max-w-md">
+            Não encontramos nenhuma rota com os filtros selecionados. Tente
+            ajustar os filtros ou importar novas rotas.
           </p>
           <Button
             variant="outline"
-            className="rounded-full border-orange-200 bg-white hover:bg-orange-50 text-orange-700 shadow-sm transition-all duration-200 hover:scale-105"
-            onClick={() => {
-              setSelectedShift("ALL");
-              setSearchTerm("");
-              fetchRoutes();
-            }}
+            className="mt-4 border-orange-200 text-orange-600 hover:bg-orange-50"
+            onClick={handleRefresh}
           >
-            Limpar filtros
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Atualizar
           </Button>
         </div>
       )}
 
-      {/* Diálogo de confirmação de exclusão em massa */}
-      {showDeleteConfirm && (
-        <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
-          onClick={() => setShowDeleteConfirm(false)}
-        >
-          <div
-            className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-xl max-w-md w-full border border-red-100"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center mb-4 text-red-600">
-              <AlertTriangle className="h-6 w-6 mr-2" />
-              <h3 className="text-xl font-bold">Confirmar exclusão</h3>
-            </div>
-            <p className="mb-6 text-gray-600 dark:text-gray-300">
-              Tem certeza que deseja excluir{" "}
-              <span className="font-bold text-red-600">
-                {selectedRoutes.length}
-              </span>{" "}
-              rota(s)? Esta ação não pode ser desfeita.
-            </p>
-            <div className="flex justify-end gap-3">
-              <Button
-                variant="outline"
-                className="rounded-full border-gray-200"
-                onClick={() => setShowDeleteConfirm(false)}
-              >
-                Cancelar
-              </Button>
-              <Button
-                variant="destructive"
-                className="rounded-full shadow-sm"
-                onClick={handleDeleteMultipleRoutes}
-              >
-                Excluir
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Diálogo de Detalhes da Rota */}
+      {/* Route details dialog */}
       {selectedRoute && (
         <RouteDetails
-          isOpen={showRouteDetails}
-          onClose={() => setShowRouteDetails(false)}
-          routeData={selectedRoute}
+          route={selectedRoute}
+          open={showRouteDetails}
+          onOpenChange={setShowRouteDetails}
         />
       )}
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 flex items-center">
+              <AlertTriangle className="h-5 w-5 mr-2" />
+              Confirmar Exclusão
+            </DialogTitle>
+            <DialogDescription>
+              {deleteConfirmId
+                ? "Tem certeza que deseja excluir esta rota? Esta ação não pode ser desfeita."
+                : `Tem certeza que deseja excluir ${selectedRoutes.length} rotas selecionadas? Esta ação não pode ser desfeita.`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-gray-500">
+              Ao excluir uma rota, todos os dados associados a ela serão
+              removidos permanentemente do sistema.
+            </p>
+            <div className="bg-amber-50 p-3 rounded-md border border-amber-100 mt-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-5 w-5 text-amber-500 mt-0.5" />
+                <div>
+                  <p className="font-medium text-amber-700">Atenção</p>
+                  <p className="text-sm text-amber-600 mt-1">
+                    Se houver motoristas que selecionaram esta rota, suas
+                    solicitações serão automaticamente canceladas.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowDeleteConfirm(false);
+                setDeleteConfirmId(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (deleteConfirmId) {
+                  // Excluir rota única
+                  const routeToDelete = routes.find(
+                    (r) => r.id === deleteConfirmId,
+                  );
+                  if (routeToDelete) {
+                    setSelectedRoutes([deleteConfirmId]);
+                    handleDeleteMultipleRoutes();
+                  }
+                } else {
+                  // Excluir múltiplas rotas
+                  handleDeleteMultipleRoutes();
+                }
+              }}
+            >
+              Excluir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

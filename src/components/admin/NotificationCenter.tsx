@@ -16,8 +16,9 @@ import {
   Route,
   Truck,
 } from "lucide-react";
-import { format, formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { useToast } from "@/components/ui/use-toast";
 
 interface Notification {
   id: string;
@@ -28,6 +29,7 @@ interface Notification {
 }
 
 const NotificationCenter = () => {
+  const { toast } = useToast();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
@@ -72,14 +74,21 @@ const NotificationCenter = () => {
     // Adicionar listener para evento customizado
     const handleNotificationAdded = () => {
       loadNotifications();
+      // Reproduzir som de notificação
+      const audio = new Audio("/notification-sound.mp3");
+      audio
+        .play()
+        .catch((err) => console.error("Erro ao reproduzir som:", err));
     };
 
     window.addEventListener("storage", handleStorageChange);
     window.addEventListener("notification-added", handleNotificationAdded);
+    window.addEventListener("admin-notification", handleNotificationAdded);
 
     return () => {
       window.removeEventListener("storage", handleStorageChange);
       window.removeEventListener("notification-added", handleNotificationAdded);
+      window.removeEventListener("admin-notification", handleNotificationAdded);
     };
   }, []);
 
@@ -102,6 +111,11 @@ const NotificationCenter = () => {
     setNotifications([]);
     setUnreadCount(0);
     localStorage.setItem("adminNotifications", JSON.stringify([]));
+    toast({
+      title: "Notificações limpas",
+      description: "Todas as notificações foram removidas.",
+      variant: "default",
+    });
   };
 
   // Marcar uma notificação específica como lida

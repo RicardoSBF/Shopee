@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../ui/tabs";
-import { Home, Calendar, Settings, User } from "lucide-react";
+import { Home, Calendar, Settings, User, MapPin } from "lucide-react";
 import { ModeToggle } from "../ui/mode-toggle";
 
 interface NavigationTabsProps {

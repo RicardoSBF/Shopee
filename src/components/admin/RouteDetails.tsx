@@ -1,479 +1,290 @@
-import React, { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import React from "react";
+import { format, parseISO } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   MapPin,
   Package,
-  Route,
-  Clock,
-  Car,
-  User,
-  List,
-  MapPinned,
-  X,
-  AlertTriangle,
-  Search,
+  Calendar,
   Truck,
+  Map,
+  Clock,
+  X,
+  Download,
+  FileText,
+  User,
 } from "lucide-react";
 
-interface RouteDetailsProps {
-  isOpen: boolean;
-  onClose: () => void;
-  routeData: any;
+interface RouteData {
+  id: string;
+  fileName: string;
+  city: string;
+  neighborhoods: string[];
+  totalDistance: number;
+  sequence: number;
+  shift: "AM" | "PM" | "OUROBOROS";
+  date: string;
+  createdAt: string;
+  assignedDriver?: string;
+  deliveryRate?: number;
+  isAssigned?: boolean;
+  selected?: boolean;
+  rawData?: any[];
 }
 
-interface Driver {
-  id: string;
-  name: string;
-  vehicle_type: string;
-  phone: string;
+interface RouteDetailsProps {
+  route: RouteData;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
 const RouteDetails: React.FC<RouteDetailsProps> = ({
-  isOpen,
-  onClose,
-  routeData,
+  route,
+  open,
+  onOpenChange,
 }) => {
-  const [activeTab, setActiveTab] = useState("summary");
-  const [drivers, setDrivers] = useState<Driver[]>([]);
-  const [filteredDrivers, setFilteredDrivers] = useState<Driver[]>([]);
-  const [selectedDriver, setSelectedDriver] = useState<string>("");
-  const [selectedDriverDetails, setSelectedDriverDetails] =
-    useState<Driver | null>(null);
-  const [stops, setStops] = useState<any[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-
-  // Buscar motoristas do banco de dados
-  useEffect(() => {
-    const fetchDrivers = async () => {
-      setIsLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("users")
-          .select("id, full_name, vehicle_type, phone_number")
-          .eq("is_admin", false);
-
-        if (error) throw error;
-
-        // Mapear os dados para o formato esperado
-        const mappedDrivers = (data || []).map((driver) => ({
-          id: driver.id,
-          name: driver.full_name || "Sem nome",
-          vehicle_type: driver.vehicle_type || "Não especificado",
-          phone: driver.phone_number || "Sem telefone",
-        }));
-
-        setDrivers(mappedDrivers);
-        setFilteredDrivers(mappedDrivers);
-      } catch (error) {
-        console.error("Erro ao buscar motoristas:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchDrivers();
-  }, []);
-
-  // Filtrar motoristas quando o termo de busca mudar
-  useEffect(() => {
-    if (!searchTerm.trim()) {
-      setFilteredDrivers(drivers);
-      return;
-    }
-
-    const term = searchTerm.toLowerCase().trim();
-    const filtered = drivers.filter(
-      (driver) =>
-        driver.name.toLowerCase().includes(term) ||
-        driver.vehicle_type.toLowerCase().includes(term) ||
-        driver.phone.toLowerCase().includes(term),
-    );
-
-    setFilteredDrivers(filtered);
-  }, [searchTerm, drivers]);
-
-  // Processar dados das paradas
-  useEffect(() => {
-    if (routeData && routeData.rawData) {
-      try {
-        // Agrupar paradas por número de parada (índice 1)
-        const stopsMap = new Map();
-
-        // Pular a primeira linha (cabeçalho)
-        const dataRows = routeData.rawData.slice(1);
-
-        dataRows.forEach((row, index) => {
-          if (!row || row.length < 9) return; // Pular linhas inválidas
-
-          const stopNumber = row[1] ? String(row[1]).trim() : `Stop-${index}`;
-          const orderNumber = row[0] ? String(row[0]).trim() : `${index + 1}`;
-          const address = row[6]
-            ? String(row[6]).trim()
-            : "Endereço não especificado";
-          const city = row[7] ? String(row[7]).trim() : "";
-          const neighborhood = row[8] ? String(row[8]).trim() : "";
-          const zipCode = row[5] ? String(row[5]).trim() : "";
-          const trackingNumber = row[4] ? String(row[4]).trim() : "";
-
-          if (!stopsMap.has(stopNumber)) {
-            stopsMap.set(stopNumber, []);
-          }
-
-          stopsMap.get(stopNumber).push({
-            orderNumber,
-            address,
-            city,
-            neighborhood,
-            zipCode,
-            trackingNumber,
-          });
-        });
-
-        // Converter mapa para array
-        const stopsArray = Array.from(stopsMap.entries()).map(
-          ([stopNumber, addresses]) => ({
-            stopNumber,
-            addresses,
-          }),
-        );
-
-        setStops(stopsArray);
-        console.log(
-          "Paradas processadas:",
-          stopsArray.length,
-          "com",
-          stopsArray.reduce((total, stop) => total + stop.addresses.length, 0),
-          "endereços",
-        );
-      } catch (error) {
-        console.error("Erro ao processar dados das paradas:", error);
-        setStops([]);
-      }
-    } else {
-      setStops([]);
-    }
-  }, [routeData]);
-
-  // Lidar com a seleção de motorista
-  const handleDriverSelect = (driverId: string) => {
-    setSelectedDriver(driverId);
-    const driver = drivers.find((d) => d.id === driverId) || null;
-    setSelectedDriverDetails(driver);
-  };
-
-  // Lidar com a atribuição de rota
-  const handleAssignRoute = async () => {
-    if (!selectedDriver || !routeData) return;
-
+  // Formatar data para exibição
+  const formatDate = (dateString: string) => {
     try {
-      setIsLoading(true);
-      // Atualizar rota no banco de dados
-      const { error } = await supabase
-        .from("routes")
-        .update({
-          assigned_driver: selectedDriverDetails?.name,
-          driver_id: selectedDriver,
-          vehicle_type: selectedDriverDetails?.vehicle_type,
-          is_assigned: true,
-        })
-        .eq("id", routeData.id);
-
-      if (error) throw error;
-
-      // Fechar diálogo e atualizar rotas
-      onClose();
-      // Você pode adicionar um callback para atualizar a lista de rotas
+      const date = parseISO(dateString);
+      return format(date, "dd/MM/yyyy", { locale: ptBR });
     } catch (error) {
-      console.error("Erro ao atribuir rota:", error);
-    } finally {
-      setIsLoading(false);
+      return "Data inválida";
     }
   };
 
-  if (!routeData) return null;
+  // Formatar data e hora para exibição
+  const formatDateTime = (dateString: string) => {
+    try {
+      const date = parseISO(dateString);
+      return format(date, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+    } catch (error) {
+      return "Data inválida";
+    }
+  };
+
+  // Obter a cor do badge do turno
+  const getShiftBadgeClass = (shift: "AM" | "PM" | "OUROBOROS") => {
+    switch (shift) {
+      case "AM":
+        return "bg-blue-100 text-blue-800 border-blue-200";
+      case "PM":
+        return "bg-orange-100 text-orange-800 border-orange-200";
+      case "OUROBOROS":
+        return "bg-purple-100 text-purple-800 border-purple-200";
+      default:
+        return "";
+    }
+  };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <div className="flex items-start justify-between">
-            <div className="flex items-start gap-2">
-              <MapPin className="h-5 w-5 text-orange-500 mt-1" />
-              <div>
-                <DialogTitle className="text-xl">
-                  Detalhes da Rota - {routeData.city}
-                </DialogTitle>
-                <DialogDescription className="text-sm mt-1">
-                  Visualize e gerencie os detalhes de atribuição da rota
-                </DialogDescription>
-              </div>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onClose}
-              className="h-8 w-8"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader className="bg-gradient-to-r from-orange-500 to-orange-600 -mx-6 -mt-6 px-6 py-4 rounded-t-lg">
+          <DialogTitle className="text-white flex items-center">
+            <Package className="h-5 w-5 mr-2" />
+            Detalhes da Rota {route.fileName.split(" ").pop()}
+          </DialogTitle>
+          <DialogDescription className="text-orange-100">
+            Informações detalhadas sobre a rota selecionada
+          </DialogDescription>
         </DialogHeader>
 
-        <Tabs
-          defaultValue="summary"
-          value={activeTab}
-          onValueChange={setActiveTab}
-          className="mt-2"
-        >
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="summary">Resumo da Rota</TabsTrigger>
-            <TabsTrigger value="delivery">Detalhes de Entrega</TabsTrigger>
-          </TabsList>
-
-          {/* Aba de Resumo da Rota */}
-          <TabsContent value="summary" className="space-y-4 mt-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Informações da Rota */}
-              <div className="space-y-6">
-                <h3 className="text-lg font-medium">Informações da Rota</h3>
-                <div className="space-y-4">
-                  <div className="flex items-start gap-3">
-                    <MapPin className="h-5 w-5 text-gray-500 mt-0.5" />
-                    <div>
-                      <div className="text-sm text-gray-500">Cidade:</div>
-                      <div className="font-medium">{routeData.city}</div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-3">
-                    <Route className="h-5 w-5 text-gray-500 mt-0.5" />
-                    <div>
-                      <div className="text-sm text-gray-500">Distância:</div>
-                      <div className="font-medium">
-                        {routeData.totalDistance} km
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-3">
-                    <Package className="h-5 w-5 text-gray-500 mt-0.5" />
-                    <div>
-                      <div className="text-sm text-gray-500">Pacotes:</div>
-                      <div className="font-medium">{routeData.sequence}</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Informações de Status */}
-              <div className="space-y-6">
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium">Informações de Status</h3>
-                  <div className="flex items-center gap-2">
-                    <div className="text-sm text-gray-500">Status Atual:</div>
-                    <Badge
-                      className={`${routeData.isAssigned ? "bg-green-100 text-green-800 hover:bg-green-100" : "bg-orange-100 text-orange-800 hover:bg-orange-100"}`}
-                    >
-                      {routeData.isAssigned ? "Atribuída" : "Disponível"}
-                    </Badge>
-                  </div>
-                </div>
-
-                <div className="mt-6">
-                  <h3 className="text-lg font-medium mb-4">Atribuir Rota</h3>
-
-                  <div className="space-y-4">
-                    <div>
-                      <div className="text-sm text-gray-500 mb-2">
-                        Selecionar Motorista
-                      </div>
-                      <Select
-                        value={selectedDriver}
-                        onValueChange={handleDriverSelect}
-                      >
-                        <SelectTrigger className="w-full rounded-lg border-orange-200 focus:ring-orange-500 focus:border-orange-500 shadow-sm">
-                          <SelectValue placeholder="Selecione um motorista" />
-                        </SelectTrigger>
-                        <SelectContent className="rounded-lg border-orange-200">
-                          {drivers.length > 0 ? (
-                            drivers.map((driver) => (
-                              <SelectItem
-                                key={driver.id}
-                                value={driver.id}
-                                className="hover:bg-orange-50"
-                              >
-                                <div className="flex justify-between items-center w-full">
-                                  <span>{driver.name}</span>
-                                  <span className="text-xs bg-gray-100 px-2 py-1 rounded">
-                                    {driver.vehicle_type}
-                                  </span>
-                                </div>
-                              </SelectItem>
-                            ))
-                          ) : (
-                            <SelectItem value="no-drivers" disabled>
-                              Nenhum motorista disponível
-                            </SelectItem>
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {selectedDriverDetails && (
-                      <div className="bg-orange-50 border border-orange-100 rounded-lg p-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <Truck className="h-4 w-4 text-orange-500" />
-                          <span className="font-medium text-orange-700">
-                            Motorista Selecionado
-                          </span>
-                        </div>
-                        <div className="pl-6 space-y-2">
-                          <div className="flex justify-between items-center">
-                            <span className="text-sm text-gray-600">Nome:</span>
-                            <span className="font-medium text-gray-800">
-                              {selectedDriverDetails.name}
-                            </span>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-sm text-gray-600">
-                              Veículo:
-                            </span>
-                            <span className="font-medium text-gray-800">
-                              {selectedDriverDetails.vehicle_type}
-                            </span>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-sm text-gray-600">
-                              Telefone:
-                            </span>
-                            <span className="font-medium text-gray-800">
-                              {selectedDriverDetails.phone}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="flex justify-end gap-2 mt-6">
-                      <Button variant="outline" onClick={onClose}>
-                        Cancelar
-                      </Button>
-                      <Button
-                        className="bg-orange-500 hover:bg-orange-600 text-white"
-                        disabled={!selectedDriver || isLoading}
-                        onClick={handleAssignRoute}
-                      >
-                        {isLoading ? "Atribuindo..." : "Atribuir Rota"}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </TabsContent>
-
-          {/* Aba de Detalhes de Entrega */}
-          <TabsContent value="delivery" className="space-y-4 mt-4">
-            <div>
-              <h3 className="text-lg font-medium mb-4">
-                Paradas e Endereços de Entrega
+        <div className="space-y-6 py-4">
+          {/* Informações básicas */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-orange-50 p-4 rounded-lg border border-orange-100 shadow-sm">
+              <h3 className="text-lg font-bold text-orange-800 mb-3 flex items-center">
+                <MapPin className="h-5 w-5 mr-2 text-orange-600" />
+                Localização
               </h3>
-              <p className="text-sm text-gray-500 mb-4">
-                Total de {stops.length} paradas com {routeData.sequence} pacotes
-              </p>
-
-              <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
-                {stops.map((stop, index) => (
-                  <div
-                    key={index}
-                    className="border rounded-lg overflow-hidden"
-                  >
-                    <div className="bg-orange-50 p-3 flex items-center justify-between border-b">
-                      <div className="flex items-center gap-2">
-                        <div className="bg-orange-500 text-white w-8 h-8 rounded-full flex items-center justify-center font-medium">
-                          {index + 1}
-                        </div>
-                        <div>
-                          <h4 className="font-medium">
-                            Parada #{stop.stopNumber}
-                          </h4>
-                          <p className="text-sm text-gray-500">
-                            {stop.addresses.length} entregas
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="divide-y">
-                      {stop.addresses.map((address: any, addrIndex: number) => (
-                        <div key={addrIndex} className="p-3 hover:bg-gray-50">
-                          <div className="flex items-start gap-2">
-                            <div className="bg-gray-100 text-gray-700 w-6 h-6 rounded-full flex items-center justify-center text-xs mt-0.5">
-                              {address.orderNumber}
-                            </div>
-                            <div className="flex-1">
-                              <div className="font-medium">
-                                {address.address}
-                              </div>
-                              <div className="flex items-center justify-between mt-1">
-                                <div className="flex items-center gap-1 text-sm text-gray-500">
-                                  <MapPinned className="h-3.5 w-3.5" />
-                                  {address.neighborhood ||
-                                    address.city ||
-                                    "Não especificado"}
-                                </div>
-                                <div className="text-sm text-gray-500">
-                                  {address.zipCode || ""}
-                                </div>
-                              </div>
-                              <div className="text-xs text-gray-400 mt-1">
-                                Rastreamento: {address.trackingNumber || "N/A"}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
+              <div className="space-y-3">
+                <div className="flex items-center">
+                  <span className="font-medium text-gray-700 w-24">
+                    Cidade:
+                  </span>
+                  <span className="text-gray-800">{route.city}</span>
+                </div>
+                <div className="flex items-start">
+                  <span className="font-medium text-gray-700 w-24 mt-1">
+                    Bairros:
+                  </span>
+                  <div className="flex-1">
+                    <div className="bg-white p-2 rounded-md border border-orange-100 max-h-32 overflow-y-auto">
+                      <ul className="space-y-1">
+                        {route.neighborhoods.map((neighborhood, idx) => (
+                          <li
+                            key={idx}
+                            className="flex items-center text-gray-800"
+                          >
+                            <span className="w-2 h-2 bg-orange-400 rounded-full mr-2"></span>
+                            {neighborhood}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   </div>
-                ))}
-              </div>
-
-              <div className="flex justify-end mt-6">
-                <Button
-                  variant="outline"
-                  onClick={() => setActiveTab("summary")}
-                >
-                  Voltar para o Resumo
-                </Button>
+                </div>
               </div>
             </div>
-          </TabsContent>
-        </Tabs>
+
+            <div className="bg-orange-50 p-4 rounded-lg border border-orange-100 shadow-sm">
+              <h3 className="text-lg font-bold text-orange-800 mb-3 flex items-center">
+                <Clock className="h-5 w-5 mr-2 text-orange-600" />
+                Informações da Rota
+              </h3>
+              <div className="space-y-3">
+                <div className="flex items-center">
+                  <span className="font-medium text-gray-700 w-24">Turno:</span>
+                  <Badge
+                    className={getShiftBadgeClass(route.shift)}
+                    variant="outline"
+                  >
+                    {route.shift}
+                  </Badge>
+                </div>
+                <div className="flex items-center">
+                  <span className="font-medium text-gray-700 w-24">Data:</span>
+                  <span className="text-gray-800">
+                    {formatDate(route.date)}
+                  </span>
+                </div>
+                <div className="flex items-center">
+                  <span className="font-medium text-gray-700 w-24">
+                    Distância:
+                  </span>
+                  <span className="text-gray-800">
+                    {route.totalDistance.toFixed(1)} km
+                  </span>
+                </div>
+                <div className="flex items-center">
+                  <span className="font-medium text-gray-700 w-24">
+                    Pacotes:
+                  </span>
+                  <span className="text-gray-800">
+                    {route.rawData?.length || 0}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Status da atribuição */}
+          <div className="bg-orange-50 p-4 rounded-lg border border-orange-100 shadow-sm">
+            <h3 className="text-lg font-bold text-orange-800 mb-3 flex items-center">
+              <User className="h-5 w-5 mr-2 text-orange-600" />
+              Status da Atribuição
+            </h3>
+            <div className="space-y-3">
+              <div className="flex items-center">
+                <span className="font-medium text-gray-700 w-24">Status:</span>
+                {route.isAssigned ? (
+                  <Badge className="bg-green-100 text-green-800 border-green-200">
+                    Atribuída
+                  </Badge>
+                ) : route.is_pending ? (
+                  <Badge className="bg-amber-100 text-amber-800 border-amber-200">
+                    Pendente
+                  </Badge>
+                ) : (
+                  <Badge className="bg-blue-100 text-blue-800 border-blue-200">
+                    Disponível
+                  </Badge>
+                )}
+              </div>
+              {route.isAssigned && (
+                <div className="flex items-center">
+                  <span className="font-medium text-gray-700 w-24">
+                    Motorista:
+                  </span>
+                  <span className="text-gray-800">{route.assignedDriver}</span>
+                </div>
+              )}
+              <div className="flex items-center">
+                <span className="font-medium text-gray-700 w-24">
+                  Criada em:
+                </span>
+                <span className="text-gray-800">
+                  {formatDateTime(route.createdAt)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Dados brutos (se disponíveis) */}
+          {route.rawData && route.rawData.length > 0 && (
+            <div className="bg-orange-50 p-4 rounded-lg border border-orange-100 shadow-sm">
+              <h3 className="text-lg font-bold text-orange-800 mb-3 flex items-center">
+                <FileText className="h-5 w-5 mr-2 text-orange-600" />
+                Dados da Rota
+              </h3>
+              <div className="bg-white p-3 rounded-md border border-orange-100 max-h-64 overflow-y-auto">
+                <table className="min-w-full divide-y divide-orange-200">
+                  <thead className="bg-orange-50">
+                    <tr>
+                      {Object.keys(route.rawData[0] || {}).map((key) => (
+                        <th
+                          key={key}
+                          className="px-3 py-2 text-left text-xs font-medium text-orange-700 uppercase tracking-wider"
+                        >
+                          {key}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-orange-100">
+                    {route.rawData.map((item, idx) => (
+                      <tr key={idx} className="hover:bg-orange-50">
+                        {Object.values(item).map((value: any, valueIdx) => (
+                          <td
+                            key={valueIdx}
+                            className="px-3 py-2 whitespace-nowrap text-xs text-gray-700"
+                          >
+                            {typeof value === "object"
+                              ? JSON.stringify(value)
+                              : String(value)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="flex justify-between items-center">
+          <Button
+            variant="outline"
+            className="border-orange-200 text-orange-700 hover:bg-orange-50"
+            onClick={() => onOpenChange(false)}
+          >
+            <X className="h-4 w-4 mr-2" />
+            Fechar
+          </Button>
+
+          <Button
+            variant="default"
+            className="bg-orange-600 hover:bg-orange-700"
+            onClick={() => {
+              // Lógica para exportar dados da rota (se necessário)
+              console.log("Exportar dados da rota", route.id);
+            }}
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Exportar Dados
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
